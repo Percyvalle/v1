@@ -326,7 +326,9 @@ def _pid_lock(pid_file: Path):
                     lock_path.unlink(missing_ok=True)
                     continue
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Не удалось получить lock на {pid_file.name} (занято другим запросом)")
+                raise TimeoutError(
+                    f"Не удалось получить lock на {pid_file.name} (занято другим запросом)"
+                ) from None
             time.sleep(0.1)
     try:
         yield

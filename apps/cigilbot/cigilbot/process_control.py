@@ -78,7 +78,7 @@ def _pid_lock(broadcaster_id: str) -> Iterator[None]:
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"Не удалось получить lock на управление consumer {broadcaster_id!r} (занято другим запросом)"
-                )
+                ) from None
             time.sleep(0.1)
     try:
         yield

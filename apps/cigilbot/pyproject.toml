@@ -26,6 +26,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # В тестах допустимы длинные литералы-фикстуры и «магические» числа порогов
 "tests/**" = ["E402"]
+# consumer.py запускается как `python -m cigilbot.consumer <id>` и правит
+# sys.path до импортов пакета — иначе они не находятся. Порядок намеренный.
+"cigilbot/consumer.py" = ["E402", "I001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

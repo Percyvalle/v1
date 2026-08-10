@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import numpy as np
 from faster_whisper import WhisperModel

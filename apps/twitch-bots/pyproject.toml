@@ -26,6 +26,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # В тестах допустимы длинные литералы-фикстуры и «магические» числа порогов
 "tests/**" = ["E402"]
+# SIM103 в _is_skip_reply: прямой возврат условия отдал бы объект Match от
+# SILENCE_PATTERN.match(), а не bool, как объявлено в сигнатуре. Цепочка
+# guard-clause'ов здесь и честнее по типу, и читается ровнее.
+"bot/brain.py" = ["SIM103"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

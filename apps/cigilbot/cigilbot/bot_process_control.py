@@ -70,7 +70,9 @@ def _pid_lock() -> Iterator[None]:
                     LOCK_FILE.unlink(missing_ok=True)
                     continue
             if time.monotonic() >= deadline:
-                raise TimeoutError("Не удалось получить lock на управление chatbot-процессом (занято другим запросом)")
+                raise TimeoutError(
+                    "Не удалось получить lock на управление chatbot-процессом (занято другим запросом)"
+                ) from None
             time.sleep(0.1)
     try:
         yield
