@@ -33,6 +33,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("cigilbot.consumer")
 
@@ -44,7 +45,7 @@ from cigilbot.config import load_channel_profile, load_config as load_moderation
 from cigilbot.engine import ModerationEngine
 from cigilbot.executor import ActionExecutor, process_pending
 from cigilbot.inbox import ChatInbox
-from cigilbot.mod_token import ModTokenError, load_mod_token_manager
+from cigilbot.mod_token import ModTokenError, ModTokenManager, load_mod_token_manager
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore
 from cigilbot.twitch_api import HelixClient
@@ -90,7 +91,7 @@ class ModerationConsumer:
         self.store = ModerationStore(str(mod_db_path))
         self.inbox = ChatInbox(str(bot_db_path), channel_login=channel)
         self.engine: ModerationEngine | None = None
-        self.mod_token_manager = None
+        self.mod_token_manager: ModTokenManager | None = None
         self.helix_client: HelixClient | None = None
         # Отдельный клиент только для get_users() (возраст аккаунта) — та
         # ручка работает по App Access Token (client_id/secret), без scope
@@ -178,7 +179,10 @@ class ModerationConsumer:
                 log.exception("Сбой разбора входящей очереди чата")
             await asyncio.sleep(INBOX_POLL_SECONDS)
 
-    async def _handle_inbox_item(self, payload: dict) -> None:
+    # dict[str, Any], а не dict[str, object]: payload — это разобранный JSON из
+    # mod_inbox, где значения заведомо разнотипные (float/str/bool/список), и
+    # ChatEvent ниже собирается из них по конкретным полям.
+    async def _handle_inbox_item(self, payload: dict[str, Any]) -> None:
         assert self.engine is not None
         kind = payload.get("kind")
         if kind == "raid_started":

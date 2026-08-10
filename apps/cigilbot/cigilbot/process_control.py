@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -61,7 +62,7 @@ _LOCK_STALE_SECONDS = 30.0
 
 
 @contextlib.contextmanager
-def _pid_lock(broadcaster_id: str):
+def _pid_lock(broadcaster_id: str) -> Iterator[None]:
     lock_path = _lock_file(broadcaster_id)
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
     fd = None

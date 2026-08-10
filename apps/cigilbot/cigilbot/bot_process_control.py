@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 CIGILBOT_ROOT = Path(__file__).parent.parent
@@ -56,7 +57,7 @@ _LOCK_STALE_SECONDS = 30.0  # защита от вечного зависани�
 
 
 @contextlib.contextmanager
-def _pid_lock():
+def _pid_lock() -> Iterator[None]:
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
     fd = None
     while True:

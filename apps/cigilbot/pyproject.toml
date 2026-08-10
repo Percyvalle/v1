@@ -37,7 +37,10 @@ markers = [
 ]
 
 [tool.mypy]
-files = ["cigilbot", "tests", "panel/moderation_api.py", "panel/auth.py", "panel/moderation_server.py", "panel/consumer.py"]
+# panel/consumer.py здесь был опечаткой (consumer живёт в cigilbot/consumer.py
+# и уже покрыт записью "cigilbot") — mypy падал на несуществующем файле, не
+# добравшись до анализа, поэтому типы этого проекта не проверялись вообще.
+files = ["cigilbot", "tests", "panel/moderation_api.py", "panel/auth.py", "panel/moderation_server.py", "panel/registry_api.py"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true

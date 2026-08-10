@@ -208,7 +208,10 @@ async def reset_crash(
     try:
         await _get_or_404(registry, broadcaster_id)
         await registry.reset_crash(broadcaster_id)
-        record = await registry.get_channel(broadcaster_id)  # type: ignore[assignment]
+        # Перечитываем через _get_or_404, а не сырым get_channel: тот отдаёт
+        # ChannelRecord | None, и None ушёл бы в _channel_status_dict падением
+        # на атрибуте вместо честного 404.
+        record = await _get_or_404(registry, broadcaster_id)
     finally:
         await registry.close()
     return _channel_status_dict(record)
