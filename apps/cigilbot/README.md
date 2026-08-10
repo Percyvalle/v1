@@ -1,0 +1,124 @@
+# Cigilbot
+
+Анти-спам модерация чата для Twitch — отдельный, независимый процесс рядом
+с [`../twitch-bots`](../twitch-bots) в этом же репозитории (см.
+[корневой README](../../README.md) о том, почему процессы и окружения
+раздельные). Разбирает каждое сообщение чата на признаки спама и
+координированных атак (дубликаты, всплески сообщений, подозрительные
+ссылки, невидимые символы, массовое появление новых аккаунтов) и
+объясняет каждое решение конкретными наблюдениями — без "чёрного ящика".
+Полная архитектура, инварианты безопасности и план развития — в
+[`docs/moderation-plan.md`](../../docs/moderation-plan.md).
+
+Работает в **SHADOW-режиме**: анализирует чат и пишет вердикты в БД — сам
+по себе никого не банит и не таймаутит, пока владелец канала явно не
+попросит реального исполнения через панель.
+
+## Архитектура: два независимых процесса
+
+Cigilbot **не** подключается к Twitch IRC напрямую — чат ему поставляет
+сосед, `../twitch-bots` (main.py), через очередь на диске:
+
+```
+twitch-bots/main.py                         cigilbot/cigilbot/consumer.py
+  читает Twitch IRC                           держит ModerationEngine
+  пишет каждое сообщение    --mod_inbox-->     разбирает очередь,
+  в bot.db                                     анализирует, пишет verdict
+  (никогда не ждёт ответа)                     в свою mod.<broadcaster_id>.db
+```
+
+`mod_inbox` — таблица в `bot.db` (файл twitch-bots, не этого проекта).
+main.py пишет туда и продолжает читать чат дальше не дожидаясь ответа;
+`consumer.py` открывает своё соединение к этому же файлу (WAL-режим
+делает это безопасным) и поллит его в фоне. Если Cigilbot не запущен —
+сообщения просто накапливаются в очереди, ничего не теряется и не падает.
+
+Обе БД физически разные файлы:
+- `bot.db` (twitch-bots) — история чата, `mod_inbox`. Один общий файл на все
+  каналы: один бот-аккаунт обслуживает их все, инстансов больше нет.
+- `mod.<broadcaster_id>.db` (здесь) — всё состояние модерации по одному
+  каналу: пользователи, кластеры, вердикты, паттерны, очередь действий
+  (BAN/TIMEOUT). По файлу на канал, потому что `ModerationEngine` стейтфул и
+  смешивать состояние каналов рискованно.
+
+## Установка
+
+```powershell
+cd apps\cigilbot
+python -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt
+copy .env.example .env
+```
+
+Заполни `.env`:
+- `PANEL_TWITCH_CLIENT_ID` / `PANEL_TWITCH_CLIENT_SECRET` — отдельное
+  Twitch-приложение для входа в панель (см. комментарии в `.env.example`)
+- `PANEL_TWITCH_CHANNEL`, `PANEL_SESSION_SECRET`
+- `TWITCH_MOD_*` — не трогать руками, заполняются кнопкой "Получить токен
+  бота" в Settings панели
+- `INTERNAL_SYNC_TOKEN` — общий секрет с twitch-bots для синхронизации
+  Registry; должен совпадать в обоих проектах
+
+Конфигурация каналов **не в `.env`**: источник правды — `registry.db`, канал
+добавляется через панель twitch-bots (порт 8765) и зеркалируется сюда. Файлов
+`.env.<профиль>` здесь больше нет — они остались от старой per-channel
+модели, убранной в Phase 1.
+
+Если `../twitch-bots` лежит не рядом с этим проектом, укажи путь явно
+через `BOT_PROJECT_ROOT` в `.env`.
+
+## Запуск
+
+```powershell
+# Окно 1 — панель модерации (порт 8766)
+.\.venv\Scripts\python -m panel.moderation_server
+
+# Окно 2 — обработчик очереди, по одному на канал (нужен всегда, пока
+# MODERATION_ENABLED=true в twitch-bots). Аргумент — broadcaster_id из
+# registry.db, не имя канала: ник можно сменить, числовой id стабилен.
+.\.venv\Scripts\python -m cigilbot.consumer 168599565
+```
+
+Consumer'ы можно не запускать руками: `supervisor.py` внутри панели поднимает
+и останавливает их сам по `desired_state` канала в Registry.
+
+Панель откроется на `http://localhost:8766/moderation`. Вход через Twitch:
+владелец канала получает роль OWNER, модераторы канала — MODERATOR,
+остальные — VIEWER; ADMIN назначается вручную существующим OWNER/ADMIN
+через экран Panel Users.
+
+**Реальные баны/таймауты** (кнопки BAN ALL/TIMEOUT ALL в панели) требуют
+токен модератора со scope `moderator:manage:banned_users` — получается
+прямо в браузере: Settings панели -> «Получить токен бота», войти на
+Twitch ПОД АККАУНТОМ БОТА (не под личным), аккаунт бота должен быть
+модератором канала (`/mod <бот>` в чате). Без него `consumer.py`
+всё равно принимает задания в очередь, но не исполняет их.
+
+## Структура проекта
+
+```
+cigilbot/              — движок: детекторы, кластеризация, скоринг, policy
+cigilbot/consumer.py   — фоновый процесс: разбирает mod_inbox, кормит движок,
+                          исполняет очередь действий (BAN/TIMEOUT)
+cigilbot/inbox.py      — чтение mod_inbox из чужого файла БД (twitch-bots)
+cigilbot/store.py      — персистентность (своя mod.<broadcaster_id>.db)
+cigilbot/supervisor.py — авто старт/стоп consumer-процессов по Registry
+cigilbot/registry_store.py — свой registry.db (зеркало из twitch-bots)
+panel/                 — веб-панель модерации (FastAPI, порт 8766)
+panel/auth.py          — вход через Twitch OAuth (независимая копия — та
+                          же логика есть и в twitch-bots/panel/auth.py,
+                          но с разным хранилищем ADMIN-оверрайдов)
+config/moderation.yml  — веса и пороги детекторов
+config/channels/       — профиль языка/настроек по конкретному каналу
+scripts/replay.py      — прогнать историю чата (из twitch-bots) через движок
+scripts/report.py      — сводка shadow-статистики и false positives
+```
+
+## Разработка
+
+```powershell
+.\.venv\Scripts\pip install -r requirements-dev.txt
+.\.venv\Scripts\pytest
+.\.venv\Scripts\ruff check .
+.\.venv\Scripts\mypy
+```

@@ -1,0 +1,47 @@
+# Конфигурация инструментов разработки. Проект не пакет и не собирается —
+# секции [build-system]/[project] намеренно отсутствуют, чтобы никто не
+# пытался его устанавливать. Здесь только настройки ruff/pytest/mypy.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "__pycache__", "logs"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "W",   # warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "C4",  # comprehensions
+]
+ignore = [
+    "E501",  # длину строк держит formatter, дублировать проверку не нужно
+    "B008",  # вызовы в дефолтах аргументов — норма для FastAPI Depends
+]
+
+[tool.ruff.lint.per-file-ignores]
+# В тестах допустимы длинные литералы-фикстуры и «магические» числа порогов
+"tests/**" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error::DeprecationWarning:cigilbot.*"]
+markers = [
+    "slow: тесты на реальных данных из БД (прогон истории чата)",
+]
+
+[tool.mypy]
+files = ["cigilbot", "tests", "panel/moderation_api.py", "panel/auth.py", "panel/moderation_server.py", "panel/consumer.py"]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+# Библиотеки без типов — не наша забота
+[[tool.mypy.overrides]]
+module = ["lingua.*", "twitchio.*", "aiosqlite.*"]
+ignore_missing_imports = true

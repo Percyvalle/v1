@@ -1,0 +1,997 @@
+<title>CigilBot — Master Plan</title>
+<style>
+@font-face {
+  font-family: 'Plex Sans';
+  src: local('IBM Plex Sans');
+}
+
+:root {
+  --bg: #f7f8fa;
+  --bg-raised: #ffffff;
+  --bg-sunken: #eef0f3;
+  --border: #dde1e7;
+  --border-strong: #c5cad3;
+  --text: #1b2028;
+  --text-dim: #565f6d;
+  --text-faint: #8a93a1;
+  --accent: #3a66c4;
+  --accent-soft: #e8eefb;
+  --accent-text: #1f4590;
+  --critical: #c23b3b;
+  --critical-soft: #fbeaea;
+  --high: #b8792a;
+  --high-soft: #fbf1e3;
+  --medium: #3a7d5c;
+  --medium-soft: #e8f4ee;
+  --low: #6b7280;
+  --low-soft: #eef0f3;
+  --code-bg: #eef0f3;
+  --shadow: 0 1px 2px rgba(20,24,32,0.06), 0 4px 16px rgba(20,24,32,0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216;
+    --bg-raised: #171b21;
+    --bg-sunken: #0a0c0f;
+    --border: #262c35;
+    --border-strong: #3a414d;
+    --text: #e5e8ed;
+    --text-dim: #a3acba;
+    --text-faint: #6b7484;
+    --accent: #6f96e8;
+    --accent-soft: #1a2740;
+    --accent-text: #a9c1f0;
+    --critical: #e2726f;
+    --critical-soft: #3a1f20;
+    --high: #dba055;
+    --high-soft: #3a2c18;
+    --medium: #6cbf94;
+    --medium-soft: #17322489;
+    --low: #8a93a1;
+    --low-soft: #1c2129;
+    --code-bg: #0a0c0f;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.4);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1216;
+  --bg-raised: #171b21;
+  --bg-sunken: #0a0c0f;
+  --border: #262c35;
+  --border-strong: #3a414d;
+  --text: #e5e8ed;
+  --text-dim: #a3acba;
+  --text-faint: #6b7484;
+  --accent: #6f96e8;
+  --accent-soft: #1a2740;
+  --accent-text: #a9c1f0;
+  --critical: #e2726f;
+  --critical-soft: #3a1f20;
+  --high: #dba055;
+  --high-soft: #3a2c18;
+  --medium: #6cbf94;
+  --medium-soft: #173224;
+  --low: #8a93a1;
+  --low-soft: #1c2129;
+  --code-bg: #0a0c0f;
+  --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.4);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Plex Sans', 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+/* ---------- SIDEBAR ---------- */
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 28px 20px 40px;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-brand {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.sidebar-title {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0 0 22px;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar nav a {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13.5px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar nav a:hover { background: var(--bg-sunken); color: var(--text); }
+
+.sidebar nav a .n {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 16px;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
+}
+
+/* ---------- MAIN ---------- */
+main { padding: 48px 56px 120px; min-width: 0; }
+
+.doc-header { margin-bottom: 56px; }
+
+.doc-kicker {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.doc-title {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0 0 14px;
+}
+
+.doc-sub {
+  font-size: 16.5px;
+  color: var(--text-dim);
+  max-width: 640px;
+  margin: 0;
+}
+
+.doc-meta {
+  display: flex;
+  gap: 24px;
+  margin-top: 24px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+}
+
+section.block { margin-bottom: 64px; scroll-margin-top: 24px; }
+
+.block-eyebrow {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.block h2 {
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+
+.block-desc {
+  color: var(--text-dim);
+  max-width: 680px;
+  margin: 0 0 28px;
+  font-size: 15px;
+}
+
+/* prose sections (concept, roles) */
+.prose { max-width: 680px; }
+.prose p { margin: 0 0 14px; color: var(--text-dim); }
+.prose strong { color: var(--text); font-weight: 600; }
+.prose ul { margin: 0 0 14px; padding-left: 20px; color: var(--text-dim); }
+.prose li { margin-bottom: 6px; }
+
+/* ---------- FEATURE CARDS ---------- */
+.feature-grid { display: flex; flex-direction: column; gap: 14px; }
+
+.feature {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  box-shadow: var(--shadow);
+}
+
+.feature-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.feature-name {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  margin: 0;
+}
+
+.feature-tags {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chip {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 3px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.chip.crit { background: var(--critical-soft); color: var(--critical); }
+.chip.high { background: var(--high-soft); color: var(--high); }
+.chip.med  { background: var(--medium-soft); color: var(--medium); }
+.chip.low  { background: var(--low-soft); color: var(--low); }
+.chip.complexity { background: var(--bg-sunken); color: var(--text-faint); border: 1px solid var(--border); }
+
+.feature-body p { margin: 0 0 8px; color: var(--text-dim); font-size: 14px; }
+.feature-body p:last-child { margin-bottom: 0; }
+.feature-body b { color: var(--text); font-weight: 600; }
+
+.feature.rejected {
+  opacity: 0.82;
+  border-style: dashed;
+}
+.feature.rejected .feature-name::after {
+  content: "— не рекомендуется";
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-faint);
+  margin-left: 8px;
+}
+
+/* ---------- DECISION NOTE ---------- */
+.decided {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--medium);
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+}
+.decided::before { content: "✓"; }
+
+/* ---------- ARCH DIAGRAM STRIP ---------- */
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow);
+}
+.pipeline-step {
+  flex: 1 0 140px;
+  padding: 16px 14px;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+.pipeline-step:last-child { border-right: none; }
+.pipeline-step .k {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.pipeline-step .v { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+.pipeline-step::after {
+  content: "→";
+  position: absolute;
+  right: -11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  font-size: 14px;
+  z-index: 1;
+}
+.pipeline-step:last-child::after { content: ""; }
+
+/* ---------- ROADMAP TABLE ---------- */
+.roadmap-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-raised); box-shadow: var(--shadow); }
+table.roadmap { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 13.5px; }
+table.roadmap th {
+  text-align: left;
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--bg-sunken);
+  position: sticky;
+  top: 0;
+}
+table.roadmap td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--text-dim);
+}
+table.roadmap tr:last-child td { border-bottom: none; }
+table.roadmap .phase-name { color: var(--text); font-weight: 600; }
+table.roadmap .phase-num {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ---------- ROLE CARDS ---------- */
+.role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.role-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+.role-card .role-name { font-weight: 650; font-size: 14.5px; margin-bottom: 6px; }
+.role-card .role-scope {
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.role-card p { margin: 0; font-size: 13px; color: var(--text-dim); }
+
+/* ---------- OPEN QUESTIONS ---------- */
+.qa {
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  margin-bottom: 12px;
+}
+.qa .q { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: var(--text); }
+.qa .a { font-size: 13.5px; color: var(--text-dim); }
+.qa .a b { color: var(--text); }
+
+footer {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12.5px;
+  font-family: 'Plex Mono', 'IBM Plex Mono', monospace;
+}
+
+@media (max-width: 880px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: relative; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  main { padding: 32px 20px 80px; }
+  .doc-title { font-size: 30px; }
+}
+</style>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">CIGILBOT</div>
+    <div class="sidebar-title">Master Plan</div>
+    <nav>
+      <a href="#concept"><span class="n">·</span>Концепция</a>
+      <a href="#roles"><span class="n">·</span>Роли и доступ</a>
+      <a href="#pipeline"><span class="n">·</span>Текущий пайплайн</a>
+      <div class="sidebar-divider"></div>
+      <a href="#d0"><span class="n">00</span>Multi-Channel Foundation</a>
+      <a href="#d1"><span class="n">01</span>Alerts / Notifications</a>
+      <a href="#d2"><span class="n">02</span>Analytics</a>
+      <a href="#d3"><span class="n">03</span>Moderation</a>
+      <a href="#d4"><span class="n">04</span>User Intelligence</a>
+      <a href="#d5"><span class="n">05</span>Stream Intelligence</a>
+      <a href="#d6"><span class="n">06</span>Dashboard / UX</a>
+      <a href="#d7"><span class="n">07</span>Automation</a>
+      <a href="#d8"><span class="n">08</span>Public Site <span style="opacity:.55;font-size:11px;">· будущее</span></a>
+      <a href="#d9"><span class="n">09</span>Discord Live Actions <span style="opacity:.55;font-size:11px;">· будущее</span></a>
+      <div class="sidebar-divider"></div>
+      <a href="#roadmap"><span class="n">·</span>Roadmap</a>
+      <a href="#open"><span class="n">·</span>Открытые решения</a>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="doc-header">
+      <div class="doc-kicker">Продуктовая архитектура · v0.1</div>
+      <h1 class="doc-title">CigilBot — Master Plan</h1>
+      <p class="doc-sub">От детектора спама на одном канале до операторской платформы модерации на десятках Twitch-каналов. Зафиксировано по итогам совместного проектирования; ничего из этого ещё не реализовано.</p>
+      <div class="doc-meta">
+        <span>9 направлений</span>
+        <span>31 функция</span>
+        <span>Реализовано: детекция + панель на 1 канал</span>
+      </div>
+    </div>
+
+    <section class="block" id="concept">
+      <div class="block-eyebrow">Концепция</div>
+      <h2>Что строим</h2>
+      <div class="prose">
+        <p><strong>CigilBot</strong> сегодня — процесс-детектор спама и ботов для одного Twitch-канала: читает чат через очередь, прогоняет через движок сигналов (9 детекторов + кластеризация), показывает рекомендации в панели, исполняет баны только по ручному подтверждению.</p>
+        <p><strong>CigilBot, каким он должен стать</strong> — операторская платформа для одного человека (оператора), ведущего модерацию на десятках каналов чужих стримеров одновременно, где каждый стример при желании получает изолированный доступ только к своему каналу. Детекция уже сильная сторона системы; то, чего не хватает — способа <em>управлять этим на масштабе</em>, а не с одного канала за раз через терминал.</p>
+        <p>Три принципа, зафиксированных в ходе проектирования, действуют как ограничения на все решения ниже:</p>
+        <ul>
+          <li><strong>Ручное подтверждение — дефолт, не догма.</strong> Из коробки автоматизация допускается только для явных случаев на фиксированном очень высоком пороге, с окном отмены. Полная автоматизация — осознанный per-channel выбор, а не системное поведение по умолчанию (направление 07).</li>
+          <li><strong>Каналы изолированы по умолчанию.</strong> Стример не видит и не знает о существовании других каналов на платформе.</li>
+          <li><strong>Explainable прежде AI.</strong> Там, где обычная статистика/правило даёт нужный результат — используется оно, не модель.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="roles">
+      <div class="block-eyebrow">Роли и доступ</div>
+      <h2>Кто что видит</h2>
+      <p class="block-desc">Модераторская панель закрыта для рядовых зрителей полностью — доступ только у тех, кто управляет каналом. Роль VIEWER здесь <strong>удалена</strong>: обычный зритель чата в эту панель не заходит никогда, ни при каких правах. Его путь — отдельный публичный сайт, см. направление 08.</p>
+      <div class="role-grid">
+        <div class="role-card">
+          <div class="role-name">Operator</div>
+          <div class="role-scope">Ты · глобальный</div>
+          <p>Единый вход, видит все подключённые каналы сразу, глобальные Alerts и Analytics across каналов. Новая роль, не существует в системе сегодня.</p>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Channel Owner</div>
+          <div class="role-scope">Стример · свой канал</div>
+          <p>Видит и настраивает только свой канал. Не знает о существовании других каналов на платформе. Совпадает с текущим OWNER.</p>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Moderator</div>
+          <div class="role-scope">Команда стримера · свой канал</div>
+          <p>Назначается Channel Owner’ом, действует в рамках одного канала. Без изменений от текущей модели.</p>
+        </div>
+        <div class="role-card">
+          <div class="role-name">Admin</div>
+          <div class="role-scope">Ручной оверрайд · свой канал</div>
+          <p>Существующая роль без изменений — ручное назначение прав сверх того, что даёт Twitch-статус модератора/владельца.</p>
+        </div>
+      </div>
+      <p class="block-desc" style="margin-top:16px;">Роль VIEWER (read-only внутри модераторской панели) убрана из системы — заменена полным отсутствием доступа для не-модераторов.</p>
+    </section>
+
+    <section class="block" id="pipeline">
+      <div class="block-eyebrow">Текущее состояние</div>
+      <h2>Пайплайн детекции (уже работает)</h2>
+      <p class="block-desc">Контекст для решений ниже — вот что уже построено и на что новые функции опираются.</p>
+      <div class="pipeline">
+        <div class="pipeline-step"><div class="k">Событие</div><div class="v">Сообщение чата приходит через очередь mod_inbox</div></div>
+        <div class="pipeline-step"><div class="k">Сигналы</div><div class="v">9 детекторов: burst, duplicate, keyword_overlap, links, unicode, language, account, username, emote</div></div>
+        <div class="pipeline-step"><div class="k">Кластеризация</div><div class="v">Union-find по сходству сообщений разных пользователей</div></div>
+        <div class="pipeline-step"><div class="k">Risk + Confidence</div><div class="v">Веса сигналов → risk_score; независимые семейства → confidence</div></div>
+        <div class="pipeline-step"><div class="k">Policy</div><div class="v">Рекомендация OBSERVE/TIMEOUT/BAN, минимум 2 семейства для BAN</div></div>
+        <div class="pipeline-step"><div class="k">Модератор</div><div class="v">Подтверждает в панели → очередь → Helix API</div></div>
+      </div>
+    </section>
+
+    <section class="block" id="d0">
+      <div class="block-eyebrow">Направление 00 · Фундамент</div>
+      <h2>Multi-Channel Foundation</h2>
+      <p class="block-desc">Разблокирует всё остальное. Без этого Analytics не может агрегировать across каналов, а Alerts не с чем связать. Согласовано как первый блок работы.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Channel Registry</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">High</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Центральная таблица каналов (id, login, статус, дата подключения) вместо файлов <code>.env.&lt;profile&gt;</code>. Добавление канала — действие в UI, не DevOps-операция.</p>
+            <p><b>Модератор видит:</b> экран Channels — список, статус live/offline/error, переключатель.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Роль Operator</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Флаг <code>is_operator</code> поверх текущей per-channel ролевой модели. Даёт доступ к списку всех каналов и глобальным экранам, не заменяя изоляцию Channel Owner.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Управляемые consumer-процессы</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Supervisor поднимает по одному consumer-воркеру на канал, перезапускает при падении, отражает статус в Channel Registry — вместо ручного запуска через терминал.</p>
+            <p><b>Модератор видит:</b> статус «жив / упал / перезапускается» на экране Channels.</p>
+          </div>
+        </article>
+      </div>
+      <div class="decided">Согласовано как фундамент — делаем в числе первых</div>
+    </section>
+
+    <section class="block" id="d1">
+      <div class="block-eyebrow">Направление 01</div>
+      <h2>Alerts / Notifications</h2>
+      <p class="block-desc">Оператор физически не может держать в фокусе десятки чатов одновременно — узнаёт об атаке через Discord, не через панель.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Discord-webhook на подтверждённый кластер</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Триггер — только на новый активный кластер, не на единичные вердикты (естественный фильтр от шума). Embed: канал, число ботов, топ-сигналы, ссылка.</p>
+            <p><b>Per-channel, без сводного канала оператора</b> — webhook настраивается в Settings каждого канала отдельно; алерты одного канала не смешиваются с другими.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Deep-link в панель</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Ссылка вида <code>/moderation?channel=X&amp;cluster=Y</code> — панель сразу открывает нужный канал и подсвечивает кластер, без ручного поиска.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Ежедневный digest</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Сводка активности + проверка, что все consumer-процессы живы. Ловит «тихо упавший процесс», который атака-алерт не поймает.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Эскалация при повторных атаках</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>3+ кластера за короткое время на одном канале — сигнал, что базовая защита не справляется, алертится отдельно, громче обычного.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d2">
+      <div class="block-eyebrow">Направление 02</div>
+      <h2>Analytics</h2>
+      <p class="block-desc">Заявленный приоритет. Три разных вопроса, три разных отчёта — не один общий дашборд.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Moderation Effectiveness</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Тренд по времени: кластеров/день, FP-rate по каждому сигналу, сравнение эффективности across каналов. Данные уже есть в <code>mod_stats_daily</code>/<code>mod_feedback</code> — не хватает визуализации.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Chat Health</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Активность реальных зрителей: сообщений/минуту, уникальные чаттеры, retention между стримами, доля новых аккаунтов. То, ради чего стример вообще смотрит в панель помимо модерации.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Incident Timeline</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">High</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Атака как единица данных со своей таймлайн: начало → пик → конец, состав участников, применённые действия. Новая сущность <code>mod_incidents</code> поверх существующих кластеров — не просто фильтр списка.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Retention Policy</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Сырые сообщения хранятся <b>30 дней</b>, дальше — только агрегаты. Вердикты/кластеры/действия остаются навсегда (доказательная база банов). Без этого Chat Health создаёт риск неограниченного роста базы.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d3">
+      <div class="block-eyebrow">Направление 03</div>
+      <h2>Moderation</h2>
+      <p class="block-desc">Усиление уже работающей системы, включая уникальное преимущество мульти-канальности.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Cross-Channel Bot Fingerprint</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Аккаунт, забаненный на канале A, получает risk-boost при появлении на канале B. Общая таблица known bad actors across всех каналов оператора — то, что одиночный бот на одном канале не может себе позволить.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Raid Shield</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Авто-детект начала рейда (событие <code>raid_started</code> уже приходит в очередь) временно ужесточает пороги, аналогично ручному Attack Mode — но без необходимости включать его вручную на каждом из десятков каналов.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Прогрессивные таймауты</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Длительность растёт при повторных нарушениях (<code>prior_timeouts</code> уже есть в данных, просто не используется для расчёта). Для пограничных случаев — токсичный человек, не бот.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Watchlist</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Противоположность marked_safe: пользователь под наблюдением, ещё не заслуживший бан. Небольшой risk-boost на будущих сообщениях, отдельная вкладка.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d4">
+      <div class="block-eyebrow">Направление 04</div>
+      <h2>User Intelligence</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Risk Profile History</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Low-Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Агрегированная карточка пользователя: таймлайн всех вердиктов/действий across каналов, не просто счётчики <code>prior_timeouts</code>/<code>prior_warnings</code>.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Trusted Regulars как вкладка</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Делает <code>TrustLevel.REGULAR</code> видимой позитивной категорией, а не только тихой скидкой на risk_score.</p>
+          </div>
+        </article>
+        <article class="feature rejected">
+          <div class="feature-head">
+            <h3 class="feature-name">Behavior Similarity Network</h3>
+            <div class="feature-tags"><span class="chip low">Low</span><span class="chip complexity">High</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Embedding-поиск похожего поведения на ранее забаненных без явного совпадения текста. Плохо сочетается с принципом explainable — модератор не может проверить, почему сработало. Малый прирост ценности за большую сложность; оставлено как идея, не как план.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d5">
+      <div class="block-eyebrow">Направление 05</div>
+      <h2>Stream Intelligence</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Live Stream Session Marker</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Явная граница онлайн/офлайн через Twitch EventSub. Фундамент для честной Analytics по стримам, а не по календарным дням — без него Incident Timeline не может ответить «что было на этом стриме».</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Post-Stream Report</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Авто-сводка после каждого стрима: пойманные атаки, здоровье чата, сравнение с прошлыми стримами. Автоматизация того, что уже делалось вручную.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Unusual Activity Detection</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Статистическая аномалия (отклонение от исторического бейзлайна канала), не LLM. Флаг «необычная активность» без интерпретации причины — модератор решает, рейд это или хайп.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d6">
+      <div class="block-eyebrow">Направление 06</div>
+      <h2>Dashboard / UX</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Operator Home → Channel Workspace</h3>
+            <div class="feature-tags"><span class="chip crit">Critical</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Стартовый экран «All Channels» (статус, последний алерт, мини-метрики) для Operator; клик на канал открывает существующий интерфейс в контексте одного канала. Channel Owner попадает сразу в свой Workspace, экран All Channels ему не показывается.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Реорганизация вкладок</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Группировка растущего списка вкладок: <b>Live</b> · <b>Analytics</b> (Effectiveness + Chat Health + Incidents) · <b>Users</b> (+ Risk Profile + Watchlist) · <b>Automation</b> (Patterns + Attack/Giveaway/Raid Shield) · <b>Settings</b> · <b>Audit</b>.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Global Alerts Feed</h3>
+            <div class="feature-tags"><span class="chip med">Medium</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Та же лента, что уходит в Discord, дублируется внутри Operator Home с deep-link — не нужно проверять Discord отдельно, если ты уже в панели.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d7">
+      <div class="block-eyebrow">Направление 07</div>
+      <h2>Automation</h2>
+      <p class="block-desc">Из коробки — ограниченное отступление от ручного подтверждения только для явных случаев. Отдельно — переключатель, дающий каналу выбрать более широкую автоматизацию осознанно.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Moderation Mode: Manual / Automatic</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">High</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Переключатель на уровне канала (Settings), не глобальный. <b>Manual</b> (дефолт) — сегодняшнее поведение: рекомендации ждут подтверждения, автобан работает только на узком фиксированном пороге. <b>Automatic</b> — движок сам исполняет TIMEOUT/BAN по обычным <code>risk_thresholds</code>, без ограничения «только явные случаи».</p>
+            <p>Каждый канал решает сам, доверяет ли он автоматизации — стример с активным сообществом модераторов может остаться на Manual, канал без своей команды модерации может включить Automatic.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Autoban на фиксированном пороге</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Жёсткий порог (например risk≥95, confidence≥0.95, ≥3 независимых семейств) — простой, предсказуемый, без per-channel настройки. При срабатывании — <b>короткое окно отмены</b> перед реальным исполнением в Helix, не тихий бан.</p>
+            <p>Отмена — через deep-link в панель из Discord-алерта, без живой кнопки в самом Discord (см. правило ниже). Окно должно быть достаточно длинным, чтобы дойти до панели и успеть отменить.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">UNBAN</h3>
+            <div class="feature-tags"><span class="chip high">High</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Отсутствует в текущем executor.py (только BAN/TIMEOUT/DELETE_MESSAGES). Обязателен как парная функция к autoban — без него исправление ошибочного бана требует выхода на сам Twitch.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d8">
+      <div class="block-eyebrow">Направление 08 · Отложено на будущее</div>
+      <h2>Public Site &amp; Viewer Identity</h2>
+      <p class="block-desc">Осознанно вынесено за пределы ближайших фаз — обсуждено, чтобы не проектировать модераторскую панель так, что потом придётся переделывать. Полностью отдельная поверхность от Channel Workspace: свой домен, свой доступ, свои данные.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Публичный лендинг (cigilbot.com)</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Анонимный посетитель видит презентацию продукта и инструкцию подключения бота к своему Twitch-каналу. Не требует авторизации.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Вход стримера → его Channel Workspace</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Тот же Channel Workspace, что и в направлении 06, только точка входа — публичный домен вместо прямой ссылки от оператора. Self-serve вместо ручного подключения.</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Личный кабинет зрителя</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Обычный зритель (не стример, не модератор) авторизуется через Twitch и видит <b>свою личную статистику</b> по каналам, где подключён CigilBot — например, статус Trusted Regular, на каких каналах он известен боту. Полностью изолировано от модераторских данных — не расширение роли VIEWER, а отдельная сущность без доступа к панели модерации.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="d9">
+      <div class="block-eyebrow">Направление 09 · Отложено на будущее</div>
+      <h2>Discord Live Actions</h2>
+      <p class="block-desc">Правило по умолчанию: Discord-алерты — только чтение и deep-link в панель, без живых действий внутри самого Discord. Живое действие требует отдельного продумывания (подтверждение личности нажавшего, гонки между несколькими модераторами, аудит) — осознанно вынесено за пределы ближайших фаз, включая тот случай (отмена autoban), где раньше рассматривалось как обязательное исключение.</p>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Discord-кнопка отмены autoban</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">Low</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Живое действие прямо в Discord-алерте для отмены autoban на явных случаях. Пока — отменяется только через deep-link в панель (см. направление 07).</p>
+          </div>
+        </article>
+        <article class="feature">
+          <div class="feature-head">
+            <h3 class="feature-name">Discord-кнопка BAN ALL на кластер</h3>
+            <div class="feature-tags"><span class="chip low">Будущее</span><span class="chip complexity">Medium</span></div>
+          </div>
+          <div class="feature-body">
+            <p>Мгновенное действие на подтверждённый кластер прямо из алерта, без перехода в панель. Ранее уже откладывалось отдельно («интересно, но не сейчас») — здесь для полноты как часть одного общего принципа.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="block" id="roadmap">
+      <div class="block-eyebrow">Roadmap</div>
+      <h2>Фазы реализации</h2>
+      <p class="block-desc">Порядок определяется зависимостями, не только приоритетом — Phase 1 разблокирует всё, что после неё ссылается на каналы/статусы/токены по-канально.</p>
+      <div class="roadmap-wrap">
+        <table class="roadmap">
+          <thead>
+            <tr><th>Фаза</th><th>Фокус</th><th>Включает</th><th>Почему в этом порядке</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="phase-num">Phase 1</td>
+              <td class="phase-name">Core</td>
+              <td>Channel Registry · роль Operator · управляемые consumer-процессы</td>
+              <td>Блокер для всего остального — Analytics и Alerts не с чем связать без единой модели каналов.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 2</td>
+              <td class="phase-name">Alerts &amp; Visibility</td>
+              <td>Discord-webhook на кластер · deep-link · digest · Operator Home</td>
+              <td>Даёт немедленную операционную ценность на масштабе — оператор перестаёт зависеть от ручного мониторинга.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 3</td>
+              <td class="phase-name">Moderation</td>
+              <td>Raid Shield · Cross-Channel Fingerprint · Watchlist · прогрессивные таймауты</td>
+              <td>Усиливает уже сильную часть системы, использует данные, которые Phase 1 сделала общими across каналов.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 4</td>
+              <td class="phase-name">Analytics</td>
+              <td>Retention Policy · Moderation Effectiveness · Chat Health · Stream Session Marker</td>
+              <td>Retention — предпосылка для Chat Health; Session Marker нужен, чтобы отчёты не путали дни со стримами.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 5</td>
+              <td class="phase-name">Intelligence</td>
+              <td>Incident Timeline · Risk Profile History · Post-Stream Report · Unusual Activity Detection</td>
+              <td>Требует накопленных агрегатов из Phase 4 — новые сущности строятся поверх уже устоявшихся данных.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 6</td>
+              <td class="phase-name">Automation</td>
+              <td>Autoban с окном отмены (deep-link) · UNBAN</td>
+              <td>Наиболее рискованная категория изменений — заводится последней, когда детекция и мониторинг уже проверены на масштабе. Moderation Mode (Manual/Automatic) — отдельно, после того как autoban на явных случаях накопит доверие на практике.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 7</td>
+              <td class="phase-name">Polish</td>
+              <td>Реорганизация вкладок · Trusted Regulars · Global Alerts Feed · эскалация при повторных атаках</td>
+              <td>UX-доводка после того, как функциональная поверхность устоялась — реорганизовывать вкладки раньше означало бы делать это дважды.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 8</td>
+              <td class="phase-name">Public Site</td>
+              <td>Лендинг · self-serve вход стримера · личный кабинет зрителя</td>
+              <td>Осознанно отложено — не блокирует ничего выше, требует отдельного домена и публичного слоя доступа, который сегодня не существует.</td>
+            </tr>
+            <tr>
+              <td class="phase-num">Phase 9</td>
+              <td class="phase-name">Discord Live Actions</td>
+              <td>Кнопка отмены autoban · BAN ALL из алерта</td>
+              <td>Осознанно отложено — deep-link в панель уже покрывает эти сценарии сегодня; живые действия в Discord требуют отдельного решения по аутентификации нажатия и аудиту.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block" id="open">
+      <div class="block-eyebrow">Зафиксированные решения</div>
+      <h2>Открытые вопросы, закрытые в ходе проектирования</h2>
+      <div class="qa">
+        <div class="q">Кто видит что на десятках каналов?</div>
+        <div class="a">Operator видит всё с одного входа. Channel Owner/Moderator видят и управляют только своим каналом, не зная о существовании других.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Есть ли у обычных зрителей доступ к модераторской панели?</div>
+        <div class="a">Нет, никогда — роль VIEWER удалена из панели. Зритель получает свой собственный вид только в будущем публичном сайте (направление 08): личную статистику по каналам, где стоит бот, без доступа к данным модерации.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Автоматизация или ручное подтверждение?</div>
+        <div class="a">Ручное — дефолт из коробки. Автобан на фиксированном очень высоком пороге с окном отмены работает всегда. Дополнительно — per-channel переключатель Manual/Automatic (направление 07): канал может осознанно перейти на полную автоматизацию TIMEOUT/BAN по обычным порогам, если доверяет системе.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Как оператор узнаёт об атаке, не глядя в панель?</div>
+        <div class="a">Discord, per-channel (не сводный канал оператора) — алерт только на подтверждённый кластер, не на единичные вердикты.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Сколько хранить сырые сообщения чата?</div>
+        <div class="a">30 дней, дальше только агрегаты для Analytics. Вердикты/кластеры/действия — бессрочно, как доказательная база.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Нужны ли Discord action-кнопки?</div>
+        <div class="a">Нет, без исключений — включая отмену autoban. Все Discord-алерты остаются read-only с deep-link в панель; живые действия в Discord (включая кнопку отмены autoban) осознанно отложены в направление 09.</div>
+      </div>
+    </section>
+
+    <footer>
+      CigilBot Master Plan · зафиксировано по итогам совместного проектирования · реализация не начата
+    </footer>
+  </main>
+</div>

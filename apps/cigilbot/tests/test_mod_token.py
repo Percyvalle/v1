@@ -1,0 +1,172 @@
+"""Тесты ModTokenManager: чтение/обновление токена модератора из .env,
+целиком на моках httpx.MockTransport — тот же приём, что test_twitch_api.py.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import httpx
+import pytest
+
+from cigilbot.mod_token import (
+    ModTokenError,
+    ModTokenManager,
+    load_mod_token_manager,
+)
+
+
+def write_env(path: Path, **values: str) -> Path:
+    env_file = path / ".env"
+    env_file.write_text(
+        "\n".join(f"{k}={v}" for k, v in values.items()) + "\n", encoding="utf-8"
+    )
+    return env_file
+
+
+CONFIGURED_ENV = {
+    "TWITCH_MOD_ACCESS_TOKEN": "access-1",
+    "TWITCH_MOD_REFRESH_TOKEN": "refresh-1",
+    "TWITCH_MOD_BOT_LOGIN": "mybot",
+    "TWITCH_MOD_BOT_USER_ID": "99",
+    "TWITCH_MOD_BROADCASTER_ID": "1",
+}
+
+
+class TestLoadModTokenManager:
+    def test_none_when_not_configured(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, SOME_OTHER_VAR="x")
+        manager = load_mod_token_manager(client_id="cid", client_secret="csecret", env_file=env_file)
+        assert manager is None
+
+    def test_none_when_partially_configured(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, TWITCH_MOD_ACCESS_TOKEN="access-1")
+        manager = load_mod_token_manager(client_id="cid", client_secret="csecret", env_file=env_file)
+        assert manager is None
+
+    def test_returns_manager_when_fully_configured(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+        manager = load_mod_token_manager(client_id="cid", client_secret="csecret", env_file=env_file)
+        assert manager is not None
+        assert manager.state.configured is True
+        assert manager.state.access_token == "access-1"
+
+
+class TestGetValidAccessToken:
+    async def test_raises_when_no_refresh_token(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path)
+        manager = ModTokenManager(client_id="cid", client_secret="csecret", env_file=env_file)
+        with pytest.raises(ModTokenError):
+            await manager.get_valid_access_token()
+        await manager.close()
+
+    async def test_refreshes_on_first_use(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+        calls = {"refresh": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["refresh"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "access-2",
+                    "refresh_token": "refresh-2",
+                    "expires_in": 14400,
+                },
+            )
+
+        manager = ModTokenManager(
+            client_id="cid", client_secret="csecret", env_file=env_file,
+            transport=httpx.MockTransport(handler),
+        )
+        token = await manager.get_valid_access_token()
+        await manager.close()
+
+        assert token == "access-2"
+        assert calls["refresh"] == 1
+
+    async def test_reuses_token_within_validity_window(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+        calls = {"refresh": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["refresh"] += 1
+            return httpx.Response(
+                200,
+                json={"access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 14400},
+            )
+
+        manager = ModTokenManager(
+            client_id="cid", client_secret="csecret", env_file=env_file,
+            transport=httpx.MockTransport(handler),
+        )
+        await manager.get_valid_access_token()
+        await manager.get_valid_access_token()
+        await manager.close()
+
+        assert calls["refresh"] == 1
+
+    async def test_refreshes_again_when_close_to_expiry(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+        calls = {"refresh": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["refresh"] += 1
+            # expires_in меньше margin (300с) — следующий вызов должен обновить снова
+            return httpx.Response(
+                200,
+                json={"access_token": f"access-{calls['refresh']}", "refresh_token": "refresh-x", "expires_in": 60},
+            )
+
+        manager = ModTokenManager(
+            client_id="cid", client_secret="csecret", env_file=env_file,
+            transport=httpx.MockTransport(handler),
+        )
+        await manager.get_valid_access_token()
+        await manager.get_valid_access_token()
+        await manager.close()
+
+        assert calls["refresh"] == 2
+
+    async def test_writes_new_token_back_to_env(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"access_token": "access-new", "refresh_token": "refresh-new", "expires_in": 14400},
+            )
+
+        manager = ModTokenManager(
+            client_id="cid", client_secret="csecret", env_file=env_file,
+            transport=httpx.MockTransport(handler),
+        )
+        await manager.get_valid_access_token()
+        await manager.close()
+
+        text = env_file.read_text(encoding="utf-8")
+        assert "TWITCH_MOD_ACCESS_TOKEN=access-new" in text
+        assert "TWITCH_MOD_REFRESH_TOKEN=refresh-new" in text
+        # остальные ключи не должны потеряться при точечной перезаписи
+        assert "TWITCH_MOD_BOT_LOGIN=mybot" in text
+
+    async def test_raises_when_refresh_fails(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, **CONFIGURED_ENV)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, text="invalid refresh token")
+
+        manager = ModTokenManager(
+            client_id="cid", client_secret="csecret", env_file=env_file,
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ModTokenError):
+            await manager.get_valid_access_token()
+        await manager.close()
+
+
+class TestModTokenState:
+    def test_configured_false_when_missing_fields(self, tmp_path: Path) -> None:
+        env_file = write_env(tmp_path, TWITCH_MOD_ACCESS_TOKEN="x")
+        manager = ModTokenManager(client_id="cid", client_secret="csecret", env_file=env_file)
+        assert manager.state.configured is False

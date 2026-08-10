@@ -1,0 +1,538 @@
+<title>Phase 1 — Channel Registry</title>
+<style>
+  @font-face {
+    font-family: 'JBMono';
+    src: local('JetBrains Mono'), local('Cascadia Code'), local('Consolas');
+  }
+
+  :root {
+    --bg: #f6f7f9;
+    --bg-raised: #ffffff;
+    --bg-inset: #eef0f3;
+    --border: #dde1e7;
+    --text: #1c2128;
+    --text-dim: #57606a;
+    --text-faint: #8b949e;
+    --accent: #1b6fd1;
+    --accent-soft: #e8f1fc;
+    --success: #1a7f37;
+    --success-soft: #dafbe1;
+    --warn: #9a6700;
+    --warn-soft: #fff8c5;
+    --crit: #cf222e;
+    --crit-soft: #ffebe9;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20,25,35,0.06), 0 4px 16px rgba(20,25,35,0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117;
+      --bg-raised: #151b23;
+      --bg-inset: #1c232c;
+      --border: #2a323d;
+      --text: #e6edf3;
+      --text-dim: #9aa5b1;
+      --text-faint: #6b7480;
+      --accent: #5fb3ff;
+      --accent-soft: #14283d;
+      --success: #3fb950;
+      --success-soft: #12261a;
+      --warn: #d29922;
+      --warn-soft: #2b2210;
+      --crit: #f85149;
+      --crit-soft: #2d1315;
+      --code-bg: #1c232c;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --bg-raised: #151b23;
+    --bg-inset: #1c232c;
+    --border: #2a323d;
+    --text: #e6edf3;
+    --text-dim: #9aa5b1;
+    --text-faint: #6b7480;
+    --accent: #5fb3ff;
+    --accent-soft: #14283d;
+    --success: #3fb950;
+    --success-soft: #12261a;
+    --warn: #d29922;
+    --warn-soft: #2b2210;
+    --crit: #f85149;
+    --crit-soft: #2d1315;
+    --code-bg: #1c232c;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 48px 24px 96px;
+  }
+
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  code, .mono {
+    font-family: 'JBMono', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 0.88em;
+  }
+
+  header.hero {
+    margin-bottom: 40px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .eyebrow {
+    font-family: 'JBMono', monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 16px;
+    max-width: 58ch;
+    margin: 0 0 20px;
+  }
+
+  .meta-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-size: 13.5px;
+    color: var(--text-faint);
+  }
+
+  .meta-row span b { color: var(--text-dim); font-weight: 600; }
+
+  .status-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--success-soft);
+    border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 24px 0 40px;
+  }
+
+  .status-banner .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--success);
+    flex-shrink: 0;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent);
+  }
+
+  .status-banner p { margin: 0; font-size: 14.5px; color: var(--text); }
+  .status-banner strong { color: var(--success); }
+
+  section { margin-bottom: 44px; }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .section-num {
+    font-family: 'JBMono', monospace;
+    font-size: 13px;
+    color: var(--text-faint);
+    font-weight: 600;
+  }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+
+  h3 {
+    font-size: 15.5px;
+    font-weight: 650;
+    margin: 24px 0 10px;
+    color: var(--text);
+  }
+
+  p { margin: 0 0 14px; color: var(--text); }
+  .lede { color: var(--text-dim); font-size: 15px; margin-bottom: 20px; }
+
+  .card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+    margin-bottom: 16px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JBMono', monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .chip-done { background: var(--success-soft); color: var(--success); }
+  .chip-fixed { background: var(--accent-soft); color: var(--accent); }
+  .chip-pending { background: var(--warn-soft); color: var(--warn); }
+  .chip-crit { background: var(--crit-soft); color: var(--crit); }
+
+  .item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 13px 0;
+    border-top: 1px solid var(--border);
+  }
+  .item:first-child { border-top: none; padding-top: 2px; }
+
+  .item-text { flex: 1; min-width: 0; }
+  .item-text .title { font-weight: 600; font-size: 14.5px; margin-bottom: 3px; }
+  .item-text .desc { font-size: 13.5px; color: var(--text-dim); line-height: 1.55; }
+  .item-chip { flex-shrink: 0; margin-top: 1px; }
+
+  .filepath {
+    font-family: 'JBMono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+
+  .incident {
+    border-left: 3px solid var(--crit);
+    background: var(--crit-soft);
+    border-radius: 0 10px 10px 0;
+    padding: 18px 20px;
+    margin: 20px 0;
+  }
+  .incident .title {
+    font-weight: 700;
+    font-size: 14.5px;
+    color: var(--crit);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .incident p { font-size: 14px; margin-bottom: 8px; }
+  .incident p:last-child { margin-bottom: 0; }
+
+  ul.plain { margin: 0 0 14px; padding-left: 20px; }
+  ul.plain li { font-size: 14.5px; margin-bottom: 6px; color: var(--text); }
+  ul.plain li::marker { color: var(--text-faint); }
+
+  .divider { height: 1px; background: var(--border); margin: 44px 0; border: none; }
+
+  .next-grid {
+    display: grid;
+    gap: 12px;
+  }
+  .next-item {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .next-item .num {
+    font-family: 'JBMono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 700;
+    flex-shrink: 0;
+    width: 22px;
+  }
+  .next-item .title { font-weight: 600; font-size: 14.5px; margin-bottom: 3px; }
+  .next-item .desc { font-size: 13.5px; color: var(--text-dim); }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (max-width: 560px) {
+    body { padding: 32px 16px 72px; }
+    h1 { font-size: 26px; }
+    .item { flex-direction: column; gap: 6px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="hero">
+    <div class="eyebrow">CigilBot · TWITCH BOTS — Master Plan, направление 00</div>
+    <h1>Phase 1 — Channel Registry и управляемые процессы</h1>
+    <p class="subtitle">
+      Миграция с ручной файловой модели (<code>.env.&lt;profile&gt;</code> на канал, запуск в терминале)
+      на управляемую архитектуру: единый Channel Registry, один бот-аккаунт на все каналы,
+      supervisor и полностью разделённые панели управления.
+    </p>
+    <div class="meta-row">
+      <span><b>Проекты:</b> TWITCH BOTS + Cigilbot</span>
+      <span><b>Каналы:</b> dobriy_yura, paverpapa</span>
+      <span><b>Обновлено:</b> 09.08.2026</span>
+    </div>
+  </header>
+
+  <div class="status-banner">
+    <div class="dot"></div>
+    <p><strong>Phase 1 завершён и проверен на живых каналах.</strong> Все 8 шагов исходного плана выполнены, прошло security/correctness-ревью, найденные баги исправлены.</p>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>Архитектурные решения</h2>
+    </div>
+    <p class="lede">Ключевые повороты относительно первоначальной файловой модели.</p>
+
+    <div class="card">
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Один бот-аккаунт на все каналы</div>
+          <div class="desc">Не нужно заводить отдельный Twitch-аккаунт под каждый канал — один процесс <span class="filepath">main.py</span> слушает все каналы разом через <code>initial_channels</code>.</div>
+        </div>
+        <span class="chip chip-done item-chip">решено</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Идентификация по broadcaster_id</div>
+          <div class="desc">Канал определяется стабильным числовым Twitch ID, не по login (никнейм можно сменить).</div>
+        </div>
+        <span class="chip chip-done item-chip">решено</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Два независимых Channel Registry</div>
+          <div class="desc">Свой <span class="filepath">registry.db</span> в каждом проекте — TWITCH BOTS источник правды, синхронизация через один internal-эндпоинт.</div>
+        </div>
+        <span class="chip chip-done item-chip">решено</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Cigilbot — один consumer на канал</div>
+          <div class="desc">В отличие от бота, детектор остаётся per-channel процессом: <code>ModerationEngine</code> стейтфул, смешивать состояние каналов рискованно.</div>
+        </div>
+        <span class="chip chip-done item-chip">решено</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>Что построено</h2>
+    </div>
+
+    <h3>Channel Registry + supervisor</h3>
+    <div class="card">
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Схема registry.db (оба проекта)</div>
+          <div class="desc">Таблица <code>channels</code>, идентификация по <code>broadcaster_id</code>, статусы active/paused/archived.</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Sync API TWITCH BOTS → Cigilbot</div>
+          <div class="desc">Резолв login→broadcaster_id через Helix, зеркалирование канала, аутентификация общим секретом + localhost-проверка.</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">supervisor.py — фоновый asyncio-таск</div>
+          <div class="desc">Тик раз в 10 сек, авто старт/стоп consumer-процессов по <code>desired_state</code>, защита от restart-loop (5 попыток / 10 мин).</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">multi-channel main.py</div>
+          <div class="desc">Читает список каналов из Registry при старте (<code>_load_initial_channels</code>), подключается ко всем разом.</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+    </div>
+
+    <h3>Разделение панелей 8765 / 8766</h3>
+    <div class="card">
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Полная независимость управления</div>
+          <div class="desc"><span class="filepath">bot_process_control.py</span> — панель модерации (8766) управляет <span class="filepath">main.py</span> напрямую через subprocess.Popen, без HTTP-вызовов к 8765.</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">UI: кнопки Start/Stop + индикатор</div>
+          <div class="desc">Блок «Чат-бот (main.py)» в сайдбаре панели 8766, поллинг статуса раз в 5 сек.</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Панель 8765 очищена от cigilbot</div>
+          <div class="desc">Убраны индикатор модерации, мёртвый прокси-эндпоинт, модерационные профили скрыты из списка «Боты».</div>
+        </div>
+        <span class="chip chip-done item-chip">готово</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>Security-ревью и фиксы</h2>
+    </div>
+    <p class="lede">По запросу «перепроверить всё, найти баги/эксплойты, оптимизировать» — весь новый код сессии проверен по трём направлениям: security, race conditions, производительность.</p>
+
+    <div class="card">
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Утечка файловых дескрипторов</div>
+          <div class="desc">Popen открывал лог-файлы без закрытия в родителе — накапливалось при частых рестартах через supervisor.</div>
+        </div>
+        <span class="chip chip-crit item-chip">critical → fixed</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">TOCTOU-гонка на pid-файлах</div>
+          <div class="desc">Двойной клик Start или гонка supervisor/ручного вызова могли породить два процесса на один канал.</div>
+        </div>
+        <span class="chip chip-fixed item-chip">medium → fixed</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">PID reuse false positive</div>
+          <div class="desc">tasklist проверял только число PID — Windows может переиспользовать его в окне тика supervisor'а.</div>
+        </div>
+        <span class="chip chip-fixed item-chip">medium → fixed</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Расхождение источника токена</div>
+          <div class="desc"><code>INTERNAL_SYNC_TOKEN</code> читался по-разному в двух проектах — унифицирован приоритет env→файл.</div>
+        </div>
+        <span class="chip chip-fixed item-chip">medium → fixed</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">SQLite busy_timeout</div>
+          <div class="desc">Не был выставлен — конкурентная запись могла упасть мгновенно вместо ожидания.</div>
+        </div>
+        <span class="chip chip-fixed item-chip">medium → fixed</span>
+      </div>
+      <div class="item">
+        <div class="item-text">
+          <div class="title">Мёртвый код bot_process</div>
+          <div class="desc">Таблица и методы от старого плана авто-restart удалены — риск оборвать модерацию на живом стриме.</div>
+        </div>
+        <span class="chip chip-fixed item-chip">low → removed</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>Разобранный инцидент дня</h2>
+    </div>
+
+    <div class="incident">
+      <div class="title">⚠ Статистика не собиралась во время живого стрима</div>
+      <p><strong>Симптом:</strong> стрим идёт, чат активен, но панель не показывает никакой статистики или ленты сообщений.</p>
+      <p><strong>Причина:</strong> <span class="filepath">.env.cigilbot</span> содержал устаревшую настройку <code>INSTANCE=cigilbot</code> от старой per-channel модели. Из-за неё <code>main.py</code> писал сообщения в <code>bot.cigilbot.db</code>, а <code>cigilbot/consumer.py</code> жёстко читает общий <code>bot.db</code> — бот работал нормально и видел чат, но вся статистика утекала в файл, который никто не читал.</p>
+      <p><strong>Фикс:</strong> <code>INSTANCE</code> убран из <span class="filepath">.env.cigilbot</span>, main.py перезапущен — подтверждено на живых данных: сообщения пишутся в правильный файл, consumer детектирует кластеры и логирует решения в реальном времени.</p>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <section>
+    <div class="section-head">
+      <span class="section-num">05</span>
+      <h2>Что дальше</h2>
+    </div>
+    <p class="lede">Следующие направления Master Plan — ни одно ещё не начато.</p>
+
+    <div class="next-grid">
+      <div class="next-item">
+        <span class="num">01</span>
+        <div>
+          <div class="title">Alerts</div>
+          <div class="desc">Оповещения оператору о событиях и атаках в реальном времени.</div>
+        </div>
+      </div>
+      <div class="next-item">
+        <span class="num">02</span>
+        <div>
+          <div class="title">Analytics</div>
+          <div class="desc">Аналитика по каналам и эффективности модерации.</div>
+        </div>
+      </div>
+      <div class="next-item">
+        <span class="num">03</span>
+        <div>
+          <div class="title">Dashboard</div>
+          <div class="desc">Сводная панель на несколько каналов разом.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>CigilBot / TWITCH BOTS — internal ops doc</span>
+    <span>Phase 1 closed · 09.08.2026</span>
+  </footer>
+
+</div>
