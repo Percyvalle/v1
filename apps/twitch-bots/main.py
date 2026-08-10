@@ -200,7 +200,7 @@ brain = (
 voice_queue = VoiceQueue(cfg.queue_path)
 
 # Модерация (движок, панель, исполнение BAN/TIMEOUT) — отдельный процесс
-# Cigilbot (../Cigilbot), не часть main.py. Этот бот только пишет каждое
+# Cigilbot (../cigilbot), не часть main.py. Этот бот только пишет каждое
 # сообщение чата в очередь mod_inbox (в своей же bot.db, см.
 # bot/database.py::SCHEMA) и продолжает читать чат дальше, не дожидаясь
 # ответа — Cigilbot читает эту очередь в фоне из своего процесса
@@ -386,7 +386,7 @@ class ChatBot(commands.Bot):
     async def _enqueue_moderation(self, message, username: str, content: str) -> None:
         """Кладёт сообщение чата в mod_inbox для Cigilbot вместо прямого
         in-process вызова ModerationEngine.observe() (движок теперь живёт
-        в отдельном процессе — см. ../Cigilbot/cigilbot/consumer.py).
+        в отдельном процессе — см. ../cigilbot/cigilbot/consumer.py).
 
         Сбой здесь никогда не должен ронять обработку сообщения ботом —
         модерация лишь наблюдает, а не является частью основного пути.
