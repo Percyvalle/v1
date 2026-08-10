@@ -586,7 +586,9 @@ class ModerationStore:
             SELECT id, created_at, actor, actor_role, action, scope, cluster_id,
                    pattern_id, reason, confirmation, succeeded, failed, details_json
             FROM mod_actions
-            ORDER BY created_at DESC
+            -- см. get_signal_fp_penalty: равный created_at у записей одного
+            -- тика часов делает порядок без id DESC недетерминированным
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (limit,),
@@ -687,7 +689,12 @@ class ModerationStore:
     async def list_trusted(self) -> list[dict[str, Any]]:
         self._db.row_factory = aiosqlite.Row
         cursor = await self._db.execute(
-            "SELECT user_id, added_by, added_at, reason FROM mod_trusted ORDER BY added_at DESC"
+            # rowid, а не id: у mod_trusted первичный ключ — user_id (TEXT),
+            # отдельной колонки id нет, но неявный rowid растёт по порядку
+            # вставки и годится как разрыв ничьей. Ничья здесь обычная:
+            # added_at приходит из time.time(), см. get_signal_fp_penalty.
+            "SELECT user_id, added_by, added_at, reason FROM mod_trusted "
+            "ORDER BY added_at DESC, rowid DESC"
         )
         return [dict(row) for row in await cursor.fetchall()]
 
@@ -861,7 +868,14 @@ class ModerationStore:
             """
             SELECT decision FROM mod_feedback
             WHERE signal_name = ?
-            ORDER BY created_at DESC
+            -- id DESC обязателен, а не косметика: created_at приходит из
+            -- time.time(), у которого на Windows шаг ~15 мс, поэтому все
+            -- записи, сделанные модератором в пределах одного тика, имеют
+            -- РАВНЫЙ created_at. Без вторичной сортировки LIMIT отбирал из
+            -- них произвольные, и "последние sample_size решений"
+            -- оказывались случайной выборкой — fp_penalty считался не по
+            -- тем записям и гулял между вызовами на одних и тех же данных.
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (signal_name, sample_size),
@@ -879,7 +893,9 @@ class ModerationStore:
             SELECT id, created_at, signal_name, verdict_id, cluster_id, user_id,
                    pattern_id, moderator, decision
             FROM mod_feedback
-            ORDER BY created_at DESC
+            -- см. get_signal_fp_penalty: равный created_at у записей одного
+            -- тика часов делает порядок без id DESC недетерминированным
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (limit,),
