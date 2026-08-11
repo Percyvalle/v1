@@ -103,17 +103,38 @@ hang.
 along with `panel/bots_api.py` (the same unannotated code, formerly the bots panel). Both are
 pulled in under `follow_imports = "skip"` so mypy does not wander into them from checked code.
 
-Running the stack:
+Running the stack — **one command**:
 
 ```powershell
-.\.venv\Scripts\python -m panel.server    # port 8766, both screens
-.\.venv\Scripts\python main.py            # Twitch IRC + moderation
-.\.venv\Scripts\python voice_main.py      # only if VOICE_ENABLED=true
+.\.venv\Scripts\python run.py
 ```
 
-The panel can start `main.py` itself from the Registry screen. Moderation needs no separate
-launch and no supervisor: `main.py` starts an engine for every channel whose `desired_state`
-is `running` and follows changes to that itself.
+`run.py` starts the chat bot, the moderation engines, the panel (8766) and, when
+`VOICE_ENABLED=true`, `voice_main.py` as a child process. Ctrl+C stops all of it.
+
+Two OS processes, and the split has a reason. Bot, moderation and panel share one event loop —
+`Bot.start()` and `uvicorn.Server.serve()` are both coroutines, so there is nothing to gain by
+separating them. Voice stays a child process because faster-whisper and sounddevice in the
+same process as twitchio crashed it without a traceback (native-thread conflict, recorded in
+`bot/voice_queue.py`); that boundary is an incident report, not a preference.
+
+Neither half kills the other. A dead bot (expired token) leaves the panel up — the panel is
+where you fix the token. A dead panel (port taken) leaves the bot reading chat. Each failure
+is logged the moment it happens, so a half-working process never looks healthy.
+
+Inside `run.py` the panel gets `app.state.in_bot_process = True`, and the Registry screen's
+start/stop bot buttons answer 409 instead of spawning a **second** `main.py` — that would mean
+a second `ModerationHub` on the same `mod.<id>.db` and the same action queue, i.e. duplicated
+verdicts and, once execution is enabled, duplicated bans. The per-channel pid-lock that used
+to prevent this disappeared with the consumer processes.
+
+Separate entry points remain for development — restarting the panel alone keeps the bot's IRC
+connection and the engines' warm state (sliding window, user cache, clusters):
+
+```powershell
+.\.venv\Scripts\python -m panel.server   # panel only
+.\.venv\Scripts\python main.py           # bot + moderation only
+```
 
 ## Architecture
 

@@ -226,22 +226,43 @@ async def reset_crash(
 
 
 # ---------------------------------------------------------------------------
-# Управление процессом main.py (чат-бот twitch-bots) — отдельно от запуска
-# профилей в panel/bots_api.py, см. docstring cigilbot/bot_process_control.py
-# про то, почему это не дублирование. Один процесс на все активные каналы
+# Управление процессом main.py. Один процесс на все активные каналы
 # (multi-channel), не per-channel — поэтому нет параметра broadcaster_id.
+#
+# При запуске через run.py панель живёт ВНУТРИ бота, и запускать его отсюда
+# нечем: получился бы второй main.py со вторым движком модерации на те же
+# mod.<id>.db и ту же очередь действий, то есть задвоенные вердикты и
+# задвоенные баны. Поэтому в этом режиме start/stop честно отвечают 409, а
+# не делают вид, что сработали. Флаг ставит run.py (см. app.state ниже);
+# при отдельном запуске `python -m panel.server` его нет и всё работает
+# по-старому.
 # ---------------------------------------------------------------------------
 
 
+def _in_bot_process(request: Request) -> bool:
+    return bool(getattr(request.app.state, "in_bot_process", False))
+
+
 @router.get("/bot/status")
-async def bot_status(session: tuple[str, str] = Depends(require_authenticated)) -> dict[str, object]:
+async def bot_status(
+    request: Request, session: tuple[str, str] = Depends(require_authenticated)
+) -> dict[str, object]:
+    if _in_bot_process(request):
+        return {"running": True, "pid": os.getpid(), "in_process": True}
     return {"running": bot_process_control.is_running(), "pid": bot_process_control.get_pid()}
 
 
 @router.post("/bot/start")
-async def bot_start(session: tuple[str, str] = Depends(require_authenticated)) -> dict[str, object]:
+async def bot_start(
+    request: Request, session: tuple[str, str] = Depends(require_authenticated)
+) -> dict[str, object]:
     role, _ = session
     _require_role(role, "ADMIN")
+    if _in_bot_process(request):
+        raise HTTPException(
+            status_code=409,
+            detail="Бот уже запущен — панель работает внутри его процесса (run.py)",
+        )
     try:
         pid = bot_process_control.start_bot()
     except RuntimeError as exc:
@@ -250,8 +271,16 @@ async def bot_start(session: tuple[str, str] = Depends(require_authenticated)) -
 
 
 @router.post("/bot/stop")
-async def bot_stop(session: tuple[str, str] = Depends(require_authenticated)) -> dict[str, object]:
+async def bot_stop(
+    request: Request, session: tuple[str, str] = Depends(require_authenticated)
+) -> dict[str, object]:
     role, _ = session
     _require_role(role, "ADMIN")
+    if _in_bot_process(request):
+        raise HTTPException(
+            status_code=409,
+            detail="Панель работает внутри процесса бота (run.py) — остановите его целиком "
+                   "в терминале, иначе она остановит сама себя",
+        )
     bot_process_control.stop_bot()
     return {"running": False, "pid": None}

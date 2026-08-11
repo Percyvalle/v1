@@ -223,7 +223,7 @@ moderation_hub = ModerationHub(
 )
 
 
-async def _load_initial_channels() -> list[str]:
+async def load_initial_channels() -> list[str]:
     """Список каналов из Channel Registry (registry.db) — источник правды
     для того, куда подключается бот. Один Twitch-бот-аккаунт слушает ВСЕ
     активные каналы сразу через initial_channels (twitchio поддерживает это
@@ -523,16 +523,19 @@ class ChatBot(commands.Bot):
 
 
 if __name__ == "__main__":
+    # Запуск ТОЛЬКО бота, без панели и без голоса — для отладки. Обычный
+    # рабочий запуск один: `python run.py`, он поднимает всё сразу.
+    #
     # ChatBot.__init__ (через twitchio.Client.__init__) вызывает
     # asyncio.get_event_loop() синхронно — в Python 3.12 это падает, если
-    # нет текущего loop в потоке (asyncio.run() в _load_initial_channels()
+    # нет текущего loop в потоке (asyncio.run() в load_initial_channels()
     # ниже создаёт свой loop и закрывает его по выходу). Явно создаём и
     # устанавливаем loop перед созданием бота, тот же loop потом использует
     # bot.run() изнутри twitchio.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    channels = loop.run_until_complete(_load_initial_channels())
+    channels = loop.run_until_complete(load_initial_channels())
     if not channels:
         raise SystemExit(
             "Нет ни одного активного канала (Channel Registry пуст и TWITCH_CHANNEL "
