@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from cigilbot import bot_process_control
 from cigilbot.registry_store import ChannelRecord, RegistryStore
 from panel.auth import require_authenticated
-from panel.paths import ENV_FILE, REGISTRY_DB
+from paths import ENV_FILE, REGISTRY_DB
 
 router = APIRouter(prefix="/api/registry")
 
@@ -67,7 +67,7 @@ def _read_env(env_file: Path, key: str) -> str:
 
 def _internal_sync_token() -> str:
     # ENV_FILE, а не ROOT/".env": .env переехал в корень монорепо, тогда как
-    # ROOT здесь — apps/cigilbot (место registry.db). До слияния это был
+    # ROOT здесь — каталог состояния модерации. До слияния это был
     # один и тот же каталог, и разница ничего не значила.
     return os.environ.get("INTERNAL_SYNC_TOKEN", "") or _read_env(ENV_FILE, "INTERNAL_SYNC_TOKEN")
 

@@ -63,7 +63,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from panel.paths import MAIN_PROFILE, PanelRoots
+from paths import MAIN_PROFILE, PanelRoots
 
 log = logging.getLogger("panel.auth")
 
@@ -259,17 +259,18 @@ async def _fetch_viewer(cfg: PanelAuthConfig, user_token: str) -> tuple[str, str
 
 def _list_env_profile_channels(roots: PanelRoots) -> dict[str, str]:
     """{profile: channel_login} по файлам .env / .env.<profile> —
-    профильная модель, которую twitch-bots сохранил (Cigilbot отказался от
-    неё в Phase 1, см. CLAUDE.md про две сосуществующие модели каналов).
+    профильная модель чат-бота (движок модерации отказался от неё в Phase 1
+    в пользу Channel Registry, см. CLAUDE.md про две сосуществующие модели
+    каналов).
 
-    Профиль "main" живёт в корневом .env монорепо, остальные — в
-    .env.<profile> рядом с main.py: слияние панелей свело к одному файлу
-    общий конфиг, но не профили ботов."""
+    Профиль "main" живёт в корневом .env, остальные — в .env.<profile>
+    рядом с ним: слияние свело к одному файлу общий конфиг, но не профили
+    ботов."""
     result: dict[str, str] = {}
     candidates: list[tuple[str, Path]] = [(MAIN_PROFILE, roots.repo / ".env")]
     candidates += [
         (p.name.removeprefix(".env."), p)
-        for p in sorted(roots.bot.glob(".env.*"))
+        for p in sorted(roots.repo.glob(".env.*"))
         if p.name != ".env.example"
     ]
 
@@ -294,7 +295,7 @@ async def _list_profile_channels(roots: PanelRoots) -> dict[str, str]:
       * Channel Registry (registry.db) -> {broadcaster_id: login}. Источник
         правды для модерации, ключ — стабильный числовой Twitch-ID (см.
         docs/master-plan.html, направление 00).
-      * .env.<profile> в apps/twitch-bots -> {profile: login}. Профильная
+      * .env.<profile> в корне проекта -> {profile: login}. Профильная
         модель экрана ботов, ключ — имя профиля.
 
     Объединение, а не выбор одной из двух: role_for_profile получает ключ

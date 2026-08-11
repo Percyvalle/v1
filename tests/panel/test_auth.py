@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import panel.auth as auth
 from cigilbot.store import ModerationStore
-from panel.paths import PanelRoots
+from paths import PanelRoots
 
 
 class TestPanelAuthConfig:

@@ -46,7 +46,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from cigilbot import paths
+import paths
 from cigilbot.config import load_channel_profile
 from cigilbot.config import load_config as load_moderation_config
 from cigilbot.engine import ModerationEngine

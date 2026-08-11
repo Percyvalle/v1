@@ -17,7 +17,7 @@ mod_panel_users (обоснование в panel/auth.py и panel/server.py::db_
 человек был ADMIN на одной панели и MODERATOR на другой, отобрать права,
 которые у него уже были, молчаливым переносом нельзя.
 
-Запуск из apps/panel:
+Запуск из корня проекта:
     ..\\..\\.venv\\Scripts\\python scripts\\merge_panel_admins.py
     ..\\..\\.venv\\Scripts\\python scripts\\merge_panel_admins.py --dry-run
 """
@@ -30,13 +30,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Скрипт запускается как файл (`python scripts/merge_panel_admins.py`), а
+# не как модуль пакета, поэтому sys.path[0] — каталог scripts/, и корень
+# проекта в него не входит.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# panel.paths — строго первым: импорт пакета panel выполняет его __init__,
-# который и кладёт apps/cigilbot в sys.path. Строкой ниже без этого был бы
-# ModuleNotFoundError, порядок здесь не косметический.
-from panel.paths import BOT_ROOT, CIGILBOT_ROOT  # noqa: E402
-from cigilbot.store import ModerationStore  # noqa: E402, I001
+from cigilbot.store import ModerationStore  # noqa: E402
+from paths import BOT_VAR, MOD_DB  # noqa: E402
 
 # Та же иерархия, что panel/moderation_api.py::_ROLE_RANK.
 _ROLE_RANK = {"VIEWER": 0, "MODERATOR": 1, "ADMIN": 2, "OWNER": 3}
@@ -45,7 +45,7 @@ _ROLE_RANK = {"VIEWER": 0, "MODERATOR": 1, "ADMIN": 2, "OWNER": 3}
 def _find_bot_dbs() -> list[Path]:
     """bot.db и все bot.<instance>.db — профильная модель twitch-bots
     разводит БД по INSTANCE, и список админов мог осесть в любой из них."""
-    return sorted(p for p in BOT_ROOT.glob("bot*.db") if p.is_file())
+    return sorted(p for p in BOT_VAR.glob("bot*.db") if p.is_file())
 
 
 def _read_panel_admins(db: Path) -> dict[str, str]:
@@ -84,7 +84,7 @@ async def main() -> int:
         print("panel_admins пуст или таблицы нет — переносить нечего.")
         return 0
 
-    mod_db = CIGILBOT_ROOT / "mod.db"
+    mod_db = MOD_DB
     store = ModerationStore(str(mod_db))
     await store.connect()
     try:

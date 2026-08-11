@@ -3,32 +3,25 @@ import difflib
 import logging
 import random
 import re
-import sys
 import time
-from pathlib import Path
 
 from twitchio.ext import commands
 
-from bot import paths
+import paths
 from bot.brain import Brain
 from bot.config import load_config
 from bot.database import Database
 from bot.voice_queue import VoiceQueue
 
-ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# Движок модерации живёт в соседнем проекте, но теперь в ЭТОМ процессе:
-# между чтением чата и модерацией больше нет границы процессов и очереди
-# mod_inbox на диске (см. cigilbot/pipeline.py — там же про то, что за это
-# заплачено). Отсюда и импорт через apps/, которого раньше не было.
-CIGILBOT_ROOT = paths.REPO_ROOT / "apps" / "cigilbot"
-if str(CIGILBOT_ROOT) not in sys.path:
-    sys.path.insert(0, str(CIGILBOT_ROOT))
-
-from cigilbot.pipeline import ModerationHub  # noqa: E402
-from cigilbot.registry_store import RegistryStore  # noqa: E402
+# Движок модерации работает в ЭТОМ процессе: между чтением чата и
+# модерацией нет ни границы процессов, ни очереди mod_inbox на диске (см.
+# cigilbot/pipeline.py — там же про то, чем за это заплачено).
+#
+# Обычный импорт: пакеты лежат в одном корне. Пока bot/ и cigilbot/ были
+# разными каталогами под apps/, здесь стояла вставка пути в sys.path, а
+# импорт приходилось уводить вниз под неё с noqa: E402.
+from cigilbot.pipeline import ModerationHub
+from cigilbot.registry_store import RegistryStore
 
 cfg = load_config()
 

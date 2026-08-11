@@ -10,13 +10,33 @@ Russian prose to English, and write new comments in Russian.
 
 ## Repository layout
 
-Monorepo of three directories: two engines and the panel that drives both.
+One project, one process pair. Packages sit at the repo root; there is no `apps/` and no
+per-package `pyproject.toml`.
 
-| | `apps/twitch-bots` | `apps/cigilbot` | `apps/panel` |
+```
+bot/            chat bot: Twitch IRC, DeepSeek replies, voice input
+cigilbot/       moderation engine: detectors, clustering, scoring, policy
+panel/          web panel (port 8766), two screens, one login
+config/         detector thresholds and per-channel profiles
+prompts/        saved bot prompts
+scripts/        one-offs: registry import, replay, reports, admin merge
+tests/          615 tests, one suite
+docs/           plans and per-area descriptions
+main.py         entry point: chat + moderation
+voice_main.py   entry point: voice input
+paths.py        the single source of truth for where things live
+var/            runtime state — databases, logs, pids (gitignored)
+```
+
+It used to be three directories under `apps/`, and that boundary generated code: `sys.path`
+inserts in `main.py`, a bootstrap module in `panel/__init__.py` whose only job was fixing
+imports, three `paths.py` with duplicated constants plus a test guarding their agreement, and
+three `pyproject.toml` with `mypy_path` reaching through `../`. All of it is gone.
+
+| | `bot` | `cigilbot` | `panel` |
 |---|---|---|---|
 | Purpose | AI chat companion (DeepSeek) + voice input | Anti-spam moderation engine | Web panel for both, port 8766 |
-| Own `pyproject.toml` | yes | yes | yes |
-| Tests | none | 479 across 27 files | 135 across 3 files |
+| Type-checked | no | yes, strict | yes except `bots_api.py` |
 
 **Moderation runs inside the bot process.** It used to be a separate process per channel
 (`consumer.py`) fed by a `mod_inbox` table on disk, under a supervisor. That boundary is gone:
@@ -40,71 +60,60 @@ backpressure into the IRC read. Drops are counted and logged. Crash isolation is
 gone — mitigated by every background loop catching its own exceptions, so one channel failing
 does not disturb the others, but they now share a process.
 
-**The panel is deliberately one process, and a separate one.** It used to be two apps on 8765
-and 8766, and because the port is part of the browser origin, that cost a second login for no
-benefit. It stays out of the bot process for the opposite reason: it computes and executes
-nothing, only writing `desired_state`, patterns and Attack Mode into the databases the bot
-reads — so it can crash and restart without touching moderation. That used to be false: the
-supervisor lived inside the panel, so closing it stopped restart-on-crash for consumers.
+**The panel is deliberately a separate process.** It computes and executes nothing, only
+writing `desired_state`, patterns and Attack Mode into the databases the bot reads — so it can
+crash and restart without touching moderation. That used to be false: the supervisor lived
+inside the panel, so closing it stopped restart-on-crash for consumers.
 
-`apps/panel` imports from both `bot.*` and `cigilbot.*`, and `main.py` now imports
-`cigilbot.pipeline`. Two processes total: the bot (chat + moderation) and the panel.
+Two processes total: the bot (chat + moderation) and the panel. One `.venv`, one `.env`, both
+in the repo root. Voice dependencies (~600 MB) are optional, in `requirements-voice.txt`.
 
-One `.venv`, one `.env`, both in the repo root — the panel cannot be assembled from two
-separate environments. Voice dependencies (~600 MB) are optional, in `requirements-voice.txt`.
-
-Python 3.12 on Windows. None of the three is a package — `pyproject.toml` intentionally has no
+Python 3.12 on Windows. Not a package — `pyproject.toml` intentionally has no
 `[build-system]`/`[project]` section, only ruff/pytest/mypy config.
 
 ## Commands
 
 One venv in the repo root, shared by everything. `.venv/` is gitignored, so on a fresh clone
-it must be created first. Tool commands still run from inside a project directory, because
-ruff/pytest/mypy read their config from the current directory.
+it must be created first. Everything runs from the repo root — there are no per-project
+directories to `cd` into any more.
 
 ```powershell
-# Setup (once, from the repo root)
+# Setup (once)
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements-dev.txt   # includes requirements.txt
 copy .env.example .env
 .\.venv\Scripts\pip install -r requirements-voice.txt # only if VOICE_ENABLED=true
 
-# Checks — from inside apps\cigilbot or apps\panel (apps\twitch-bots has ruff only)
-cd apps\cigilbot
-..\..\.venv\Scripts\pytest
-..\..\.venv\Scripts\pytest tests/test_engine.py                    # one file
-..\..\.venv\Scripts\pytest tests/test_engine.py::test_name -x      # one test
-..\..\.venv\Scripts\ruff check .
-..\..\.venv\Scripts\mypy                                           # config-driven, no args
+# Checks
+.\.venv\Scripts\pytest
+.\.venv\Scripts\pytest tests/test_engine.py                    # one file
+.\.venv\Scripts\pytest tests/test_engine.py::test_name -x      # one test
+.\.venv\Scripts
+uff check .
+.\.venv\Scripts\mypy                                           # config-driven, no args
 ```
 
 `pytest` is configured with `asyncio_mode = "auto"` — async tests need no decorator.
 `filterwarnings` turns `DeprecationWarning` from own code into an error. A `slow` marker is
-registered but currently unused. The suites take ~10–30 s to run but the process lingers for
-about a minute afterwards before exiting; this predates the panel merge and is not a hang.
+registered but currently unused. The suite takes ~35 s but the process lingers for about a
+minute afterwards before exiting; this predates all of the recent restructuring and is not a
+hang.
 
-`apps/twitch-bots` has no `[tool.mypy]` or `[tool.pytest.ini_options]` section at all — its
-only tests checked `panel/auth.py` and moved to `apps/panel` with the panel. Running `mypy`
-there errors with "Missing target module"; that is expected, not a broken config.
+`bot/` is not type-checked: it was written without annotations and is excluded on purpose,
+along with `panel/bots_api.py` (the same unannotated code, formerly the bots panel). Both are
+pulled in under `follow_imports = "skip"` so mypy does not wander into them from checked code.
 
 Running the stack:
 
 ```powershell
-cd apps\panel
-..\..\.venv\Scripts\python -m panel.server               # port 8766, both screens
+.\.venv\Scripts\python -m panel.server    # port 8766, both screens
+.\.venv\Scripts\python main.py            # Twitch IRC + moderation
+.\.venv\Scripts\python voice_main.py      # only if VOICE_ENABLED=true
 ```
 
-The panel can start `main.py` itself from the Registry screen; that is the second and last
-process. Manually:
-
-```powershell
-cd apps\twitch-bots
-..\..\.venv\Scripts\python main.py                       # Twitch IRC + moderation
-..\..\.venv\Scripts\python voice_main.py                 # only if VOICE_ENABLED=true
-```
-
-Moderation needs no separate launch and no supervisor: `main.py` starts an engine for every
-channel whose `desired_state` is `running` and follows changes to that itself.
+The panel can start `main.py` itself from the Registry screen. Moderation needs no separate
+launch and no supervisor: `main.py` starts an engine for every channel whose `desired_state`
+is `running` and follows changes to that itself.
 
 ## Architecture
 
@@ -113,7 +122,7 @@ channel whose `desired_state` is `running` and follows changes to that itself.
 In-process, through an `asyncio.Queue`:
 
 ```
-apps/twitch-bots/main.py                  cigilbot/pipeline.py (same process)
+main.py                  cigilbot/pipeline.py (same process)
   reads Twitch IRC                          ModerationHub, one engine per channel
   hub.submit(event)      --queue-->         consumer task analyses, writes
   (returns immediately)                      verdicts into mod.<broadcaster_id>.db
@@ -132,21 +141,21 @@ still token-guarded, purely as an entry point for an external caller.
 
 | File | Owner | Contents |
 |---|---|---|
-| `var/twitch-bots/bot.db` | twitch-bots | viewers, chat history |
+| `var/bot/bot.db` | twitch-bots | viewers, chat history |
 | `var/registry.db` | shared | Channel Registry — the **only** copy: which channels exist and their `desired_state` |
 | `var/cigilbot/mod.db` | cigilbot | only `mod_panel_users` — ADMIN role overrides for **both** panel screens |
 | `var/cigilbot/mod.<broadcaster_id>.db` | cigilbot | all moderation state — **one file per channel**, because the engine is stateful |
 
 `panel_admins` in `bot.db` is gone: with one panel there is one list of ADMINs, and it lives
 in `mod_panel_users`. `bot/database.py` no longer creates the table, but does not drop it
-either — `apps/panel/scripts/merge_panel_admins.py` is the one-off that moves existing rows
+either — `scripts/merge_panel_admins.py` is the one-off that moves existing rows
 across (higher role wins on conflict, never downgrades).
 
 ### `var/` — all runtime state, outside the source trees
 
 ```
 var/registry.db    Channel Registry — shared, belongs to neither engine
-var/twitch-bots/   bot.db, usage.json, voice_input.txt, logs/, run/, panel_state/
+var/bot/   bot.db, usage.json, voice_input.txt, logs/, run/, panel_state/
 var/cigilbot/      mod.db, mod.<broadcaster_id>.db, logs/, run/
 ```
 
@@ -187,7 +196,7 @@ The `profile` parameter throughout `panel/moderation_api.py` is **historical nam
 value is a `broadcaster_id`. It was left unrenamed so the frontend (`moderation.js`) did not
 have to change.
 
-### Moderation pipeline (`apps/cigilbot`)
+### Moderation pipeline (`cigilbot/`)
 
 `engine.py::observe(event) -> Verdict` orchestrates:
 
@@ -224,22 +233,17 @@ The system runs in **SHADOW mode**: verdicts are computed and persisted, but not
 executed in Twitch until a moderator token is obtained through the panel's Settings screen.
 `executor.py` only drains `mod_action_queue`; it never decides anything.
 
-### The panel (`apps/panel`)
+### The panel (`panel/`)
 
-One FastAPI app on 8766 with two screens: `/moderation` (default, also `/`) and `/bots`. It
-lives outside both engines and imports from both, which is why `panel/__init__.py` puts
-`apps/twitch-bots` and `apps/cigilbot` on `sys.path` — that bootstrap sits in the package
-`__init__`, not in `server.py`, so tests importing routers directly get it too.
+One FastAPI app on 8766 with two screens: `/moderation` (default, also `/`) and `/bots`.
+`panel/__init__.py` used to hold a `sys.path` bootstrap for reaching the engines in their own
+`apps/` directories; the packages are siblings now and it is empty.
 
-Because the panel is no longer inside either project, `Path(__file__).parent.parent` stopped
-meaning "the project root". `panel/paths.py` names the three roots explicitly, and
-`PanelRoots` carries them through `app.state.panel_roots`:
-
-- `repo` — the single `.env`. **`_write_env_values` writes `TWITCH_MOD_*` here and
-  the moderation pipeline reads them from here.** If these two paths ever diverge, the panel
-  will report a token was obtained while every ban fails with 401.
-- `bot` — `apps/twitch-bots`: `.env.<profile>`, `bot.db`, `main.py`, `prompts/`.
-- `cigilbot` — `apps/cigilbot`: engine sources and `config/`; `mod.*.db` live in `var/`.
+`app.state.panel_roots` carries a `PanelRoots` (in `paths.py`) with two fields — `repo` and
+`var`. It exists so tests can point every root at one tmp directory; production code reads the
+module constants directly. The pair that matters most: **`_write_env_values` writes
+`TWITCH_MOD_*` into `repo/.env` and the moderation pipeline reads them from there.** If those
+ever diverge, the panel reports a token was obtained while every ban fails with 401.
 
 Roles are derived from Twitch on every login, not stored: broadcaster → `OWNER`, channel
 moderator (Helix `GET /moderation/moderators`) → `MODERATOR`, anyone else → `VIEWER`. `ADMIN`
@@ -268,7 +272,7 @@ and databases out by `INSTANCE`. Cigilbot dropped profiles in Phase 1; twitch-bo
 and the panel merge deliberately did not change that — the job was one login and one port,
 not redoing how bots are created. Both paths work — check which one a change actually affects
 before editing. Note that profile `main` now reads the **repo-root** `.env`, while named
-profiles stay in `apps/twitch-bots/.env.<profile>`.
+profiles stay in `.env.<profile>`.
 
 ## Conventions
 
@@ -281,10 +285,9 @@ profiles stay in `apps/twitch-bots/.env.<profile>`.
 - Line length 100, `E501` disabled (formatter's job), `B008` disabled (FastAPI `Depends`).
 - Failures in moderation/audit paths are logged with `log.exception` and swallowed — losing a
   verdict record must never drop a chat message.
-- `apps/cigilbot` is mypy-`strict` over `cigilbot/` and `tests/`. `apps/panel` is `strict` over
-  everything except `panel/bots_api.py`. `apps/twitch-bots` is not type-checked at all — the
-  bot was written without annotations and is intentionally excluded, and `bot.*` is pulled in
-  under `follow_imports = "skip"` so the panel's `mypy_path` does not drag it into scope.
+- mypy is `strict` over `cigilbot/`, `paths.py`, `tests/` and the annotated half of `panel/`.
+  `bot/` and `panel/bots_api.py` are excluded — written without annotations, intentionally —
+  and pulled in under `follow_imports = "skip"` so mypy does not wander into them.
 - `.gitattributes` normalizes to LF in the repo, CRLF in the working tree.
 
 ## Git
@@ -314,7 +317,7 @@ a comment or a template:
 1. `docs/*.html` and `docs/moderation-plan.md` still describe the two-panel split and the
    `mod_inbox` handoff as current. They are the design record for Phase 1 and were not
    rewritten; read them as history, not as the present shape.
-2. `apps/twitch-bots/scripts/import_registry.py` is a one-off from the Registry migration.
+2. `scripts/import_registry.py` is a one-off from the Registry migration.
    It still works; the Cigilbot copy of it was deleted because that project dropped
    `.env.<profile>` in Phase 1, so it could only ever print "импортировать нечего".
 3. `registry_store.py` still carries comments saying `process_status` is written "only by
@@ -327,5 +330,5 @@ Earlier entries here are fixed and gone: missing `streamlink`/`av` (now pinned i
 `requirements.txt`/`requirements-voice.txt`), undocumented `.env` keys (the root
 `.env.example` documents every key both engines read, `INTERNAL_SYNC_TOKEN` included),
 stale pre-monorepo paths in comments (`bot/moderation/...`, `mod.<profile>.db`,
-`../TWITCH BOTS`), the dead `apps/cigilbot/.venv`, and runtime state living inside the
+`../TWITCH BOTS`), the dead per-project `.venv`, and runtime state living inside the
 source trees — all state now lives in `var/`, see below.

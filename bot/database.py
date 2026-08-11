@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS recent_messages (
 --
 -- В уже существующих bot.db таблица остаётся лежать как есть: SQLite её
 -- не удаляет, а удалять самим значило бы потерять данные у того, кто не
--- прогнал перенос. Разовый scripts/merge_panel_admins.py в apps/panel
+-- прогнал перенос. Разовый scripts/merge_panel_admins.py
 -- переносит записи в mod_panel_users; после него таблица не читается
 -- никем и её можно дропнуть вручную.
 """

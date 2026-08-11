@@ -27,33 +27,26 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
-from cigilbot import paths
+import paths
 
-CIGILBOT_ROOT = Path(__file__).parent.parent
+# Откуда запускается main.py. Раньше это был корень соседнего проекта, и
+# BOT_PROJECT_ROOT существовал затем, чтобы указать на twitch-bots, лежащий
+# не рядом. Проект теперь один, каталог у него один — переменная осталась
+# только как аварийный оверрайд.
+BOT_PROJECT_ROOT = Path(os.environ.get("BOT_PROJECT_ROOT", str(paths.REPO_ROOT)))
 
-# BOT_PROJECT_ROOT — та же переменная, что уже использует cigilbot/consumer.py
-# для доступа к bot.db; здесь она указывает на корень twitch-bots целиком,
-# откуда запускается main.py.
-BOT_PROJECT_ROOT = Path(
-    os.environ.get("BOT_PROJECT_ROOT", str(CIGILBOT_ROOT.parent / "twitch-bots"))
-)
+BOT_VENV_PYTHON = paths.VENV_PYTHON
 
-# Общий venv в корне монорепо — не .venv внутри twitch-bots, которого больше
-# нет (см. корневой requirements.txt). Берётся из paths, а не от
-# BOT_PROJECT_ROOT: последний настраивается через переменную окружения и
-# может указывать куда угодно, тогда как venv у монорепо ровно один.
-BOT_VENV_PYTHON = paths.REPO_ROOT / ".venv" / "Scripts" / "python.exe"
-
-# Профиль twitch-bots, читающий каналы из Registry (см. .env.cigilbot в
-# apps/twitch-bots — единственный профиль без DEEPSEEK_API_KEY, чисто
-# модерационный). Не настраивается снаружи: этот модуль управляет ровно
+# Профиль бота, читающий каналы из Registry (см. .env.cigilbot в корне —
+# единственный профиль без DEEPSEEK_API_KEY, чисто модерационный). Не
+# настраивается снаружи: этот модуль управляет ровно
 # одним конкретным ботом-процессом, а не произвольным профилем.
 BOT_ENV_FILE_NAME = ".env.cigilbot"
 
-PID_FILE = paths.RUN / "chatbot.pid"
-LOCK_FILE = paths.RUN / "chatbot.lock"
-LOG_OUT = paths.LOGS / "chatbot.out.log"
-LOG_ERR = paths.LOGS / "chatbot.err.log"
+PID_FILE = paths.MOD_RUN / "chatbot.pid"
+LOCK_FILE = paths.MOD_RUN / "chatbot.lock"
+LOG_OUT = paths.MOD_LOGS / "chatbot.out.log"
+LOG_ERR = paths.MOD_LOGS / "chatbot.err.log"
 
 # Между двумя параллельными вызовами start_bot() (например, двойной клик в
 # панели, или ручной start во время автоматического) нужна атомарная секция

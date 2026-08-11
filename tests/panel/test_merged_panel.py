@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import paths
 from cigilbot.registry_store import RegistryStore
 from panel.auth import (
     DEFAULT_AFTER_LOGIN,
@@ -31,37 +32,27 @@ from panel.auth import (
     _list_profile_channels,
     _safe_next,
 )
-from panel.paths import PanelRoots
+from paths import PanelRoots
 
 
 class TestEnvProfileChannels:
     def test_main_profile_read_from_repo_root_env(self, tmp_path: Path) -> None:
         # Профиль "main" живёт в КОРНЕВОМ .env монорепо, а не в
-        # apps/twitch-bots/.env — общий конфиг после слияния один на репо.
+        # .env — общий конфиг после слияния один на репо.
         repo = tmp_path / "repo"
-        bot = tmp_path / "bot"
         repo.mkdir()
-        bot.mkdir()
         (repo / ".env").write_text("TWITCH_CHANNEL=streamer\n", encoding="utf-8")
 
-        roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path,
-            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
-        )
+        roots = PanelRoots(repo=repo, var=tmp_path)
         assert _list_env_profile_channels(roots) == {"main": "streamer"}
 
     def test_named_profiles_read_from_bot_root(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
-        bot = tmp_path / "bot"
         repo.mkdir()
-        bot.mkdir()
         (repo / ".env").write_text("TWITCH_CHANNEL=main_channel\n", encoding="utf-8")
-        (bot / ".env.second").write_text("TWITCH_CHANNEL=#SecondChannel\n", encoding="utf-8")
+        (repo / ".env.second").write_text("TWITCH_CHANNEL=#SecondChannel\n", encoding="utf-8")
 
-        roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path,
-            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
-        )
+        roots = PanelRoots(repo=repo, var=tmp_path)
         # Канал нормализуется (без #, нижний регистр) — как и везде в auth.py.
         assert _list_env_profile_channels(roots) == {
             "main": "main_channel",
@@ -70,20 +61,15 @@ class TestEnvProfileChannels:
 
     def test_example_file_and_channelless_profiles_skipped(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
-        bot = tmp_path / "bot"
         repo.mkdir()
-        bot.mkdir()
         (repo / ".env").write_text("TWITCH_CHANNEL=main_channel\n", encoding="utf-8")
         # Шаблон — не профиль.
-        (bot / ".env.example").write_text("TWITCH_CHANNEL=твой_канал\n", encoding="utf-8")
+        (repo / ".env.example").write_text("TWITCH_CHANNEL=твой_канал\n", encoding="utf-8")
         # Профиль с пустым каналом: заведён, но канал ещё не выбран —
         # роль по нему считать не по чему.
-        (bot / ".env.blank").write_text("TWITCH_CHANNEL=\n", encoding="utf-8")
+        (repo / ".env.blank").write_text("TWITCH_CHANNEL=\n", encoding="utf-8")
 
-        roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path,
-            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
-        )
+        roots = PanelRoots(repo=repo, var=tmp_path)
         assert _list_env_profile_channels(roots) == {"main": "main_channel"}
 
     def test_missing_env_files_are_not_an_error(self, tmp_path: Path) -> None:
@@ -147,51 +133,44 @@ class TestSafeNext:
         assert _safe_next(hostile) == DEFAULT_AFTER_LOGIN
 
 
-class TestPanelRoots:
-    def test_default_roots_point_at_real_projects(self) -> None:
-        """Панель переехала в apps/panel, и корни перестали совпадать с
-        каталогом кода — если эти пути разъедутся, .env и БД будут
-        читаться не оттуда, куда пишутся (см. panel/paths.py)."""
-        roots = PanelRoots.default()
-        assert (roots.bot / "main.py").exists()
-        assert (roots.cigilbot / "cigilbot").is_dir()
-        assert roots.repo == roots.bot.parent.parent
-
-    def test_state_lives_outside_the_source_trees(self) -> None:
+class TestPaths:
+    def test_state_lives_outside_the_sources(self) -> None:
         """Ровно то, ради чего заведён var/: рабочее состояние не внутри
-        каталогов с исходниками. Если кто-то вернёт БД обратно в проект,
+        дерева с исходниками. Если кто-то вернёт БД обратно к коду,
         сломается это утверждение, а не только вкус."""
-        roots = PanelRoots.default()
-        assert roots.bot_var == roots.repo / "var" / "twitch-bots"
-        assert roots.cigilbot_var == roots.repo / "var" / "cigilbot"
-        for var_dir in (roots.bot_var, roots.cigilbot_var):
-            assert not var_dir.is_relative_to(roots.bot)
-            assert not var_dir.is_relative_to(roots.cigilbot)
+        assert paths.VAR == paths.REPO_ROOT / "var"
+        assert paths.BOT_VAR.is_relative_to(paths.VAR)
+        assert paths.MOD_VAR.is_relative_to(paths.VAR)
+        for source_dir in ("bot", "cigilbot", "panel", "tests", "config"):
+            assert not paths.VAR.is_relative_to(paths.REPO_ROOT / source_dir)
 
-    def test_panel_and_engines_agree_on_state_dirs(self) -> None:
-        """panel/paths.py дублирует определения из bot/paths.py и
-        cigilbot/paths.py (импортировать их оттуда мешает порядок
-        sys.path-бутстрапа). Дубль обязан совпадать: разъедется — панель
-        будет писать в один файл, а движок читать другой."""
-        from bot import paths as bot_paths
-        from cigilbot import paths as cigilbot_paths
-
-        roots = PanelRoots.default()
-        assert roots.bot_var == bot_paths.VAR
-        assert roots.cigilbot_var == cigilbot_paths.VAR
-        assert roots.repo == bot_paths.REPO_ROOT == cigilbot_paths.REPO_ROOT
-
-    def test_registry_is_one_database_for_everyone(self) -> None:
+    def test_registry_is_one_database_outside_both_owners(self) -> None:
         """Реестров было два — свой у бота и зеркало у модерации, которые
         синхронизировала панель. Пока это были разные процессы, зеркало
-        имело смысл; теперь оба движка в одном процессе, и расхождение
-        двух копий стало бы багом внутри него. Все трое обязаны смотреть
-        в один файл, и он вне каталога любого из движков."""
-        from bot import paths as bot_paths
-        from cigilbot import paths as cigilbot_paths
+        имело смысл; в одном процессе расхождение копий стало бы багом
+        внутри него. Реестр лежит прямо в var/, а не внутри var/bot или
+        var/cigilbot, потому что не принадлежит ни тому, ни другому."""
+        assert paths.REGISTRY_DB == paths.VAR / "registry.db"
+        assert not paths.REGISTRY_DB.is_relative_to(paths.BOT_VAR)
+        assert not paths.REGISTRY_DB.is_relative_to(paths.MOD_VAR)
 
+    def test_repo_root_is_the_project_root(self) -> None:
+        """Единственный paths.py лежит в корне, и REPO_ROOT считается от
+        него. Раньше таких модулей было три, каждый считал корень своим
+        числом .parent, и совпадение приходилось проверять тестом."""
+        assert (paths.REPO_ROOT / "main.py").exists()
+        assert (paths.REPO_ROOT / "pyproject.toml").exists()
+        assert paths.ENV_FILE == paths.REPO_ROOT / ".env"
+
+    def test_panel_roots_default_matches_module_constants(self) -> None:
+        """PanelRoots существует ради подмены корней в тестах — значения по
+        умолчанию обязаны совпадать с константами модуля."""
         roots = PanelRoots.default()
-        assert roots.registry_db == bot_paths.REGISTRY_DB == cigilbot_paths.REGISTRY_DB
-        assert roots.registry_db == roots.repo / "var" / "registry.db"
-        assert not roots.registry_db.is_relative_to(roots.bot_var)
-        assert not roots.registry_db.is_relative_to(roots.cigilbot_var)
+        assert roots.repo == paths.REPO_ROOT
+        assert roots.var == paths.VAR
+        assert roots.registry_db == paths.REGISTRY_DB
+
+    def test_panel_roots_all_at_redirects_everything(self) -> None:
+        roots = PanelRoots.all_at(Path("/tmp/x"))
+        assert roots.repo == roots.var == Path("/tmp/x")
+        assert roots.registry_db == Path("/tmp/x") / "registry.db"

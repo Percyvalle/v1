@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from bot import paths
+import paths
 
 # BOT_ENV_FILE позволяет держать несколько ботов на разные каналы: у каждого
 # свой .env.<profile>, а вместе с ним своя БД, очередь и логи (см. INSTANCE
@@ -14,7 +14,7 @@ from bot import paths
 # слияния панелей общий конфиг живёт в одном файле на весь репозиторий.
 # Раньше здесь было относительное ".env", то есть файл искался относительно
 # текущей папки процесса — работало только потому, что бота всегда запускали
-# из apps/twitch-bots.
+# из каталога рядом с main.py.
 ENV_FILE = os.environ.get("BOT_ENV_FILE") or str(paths.REPO_ROOT / ".env")
 load_dotenv(ENV_FILE)
 
@@ -43,18 +43,18 @@ class Config:
 
     @property
     def db_path(self) -> str:
-        return str(paths.VAR / self._name("bot", "db"))
+        return str(paths.BOT_VAR / self._name("bot", "db"))
 
     @property
     def usage_path(self) -> str:
-        return str(paths.VAR / self._name("usage", "json"))
+        return str(paths.BOT_VAR / self._name("usage", "json"))
 
     @property
     def queue_path(self) -> str:
-        return str(paths.VAR / self._name("voice_input", "txt"))
+        return str(paths.BOT_VAR / self._name("voice_input", "txt"))
 
     def log_path(self, name: str) -> str:
-        return str(paths.LOGS / self._name(name, "log"))
+        return str(paths.BOT_LOGS / self._name(name, "log"))
 
     def _name(self, name: str, ext: str) -> str:
         """Имя файла инстанса: INSTANCE разводит несколько ботов по разным

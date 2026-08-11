@@ -1,0 +1,85 @@
+# Конфигурация инструментов разработки. Проект не пакет и не собирается —
+# секции [build-system]/[project] намеренно отсутствуют, чтобы никто не
+# пытался его устанавливать. Здесь только настройки ruff/pytest/mypy.
+#
+# Файлов было три, по одному на каталог в apps/. Каталог теперь один, и
+# вместе с ними исчезли mypy_path через ../ и необходимость держать три
+# набора одинаковых правил ruff синхронными руками.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "__pycache__", "var", "prompts"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "W",   # warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "C4",  # comprehensions
+]
+ignore = [
+    "E501",  # длину строк держит formatter, дублировать проверку не нужно
+    "B008",  # вызовы в дефолтах аргументов — норма для FastAPI Depends
+]
+
+[tool.ruff.lint.per-file-ignores]
+# В тестах допустимы длинные литералы-фикстуры и «магические» числа порогов
+"tests/**" = ["E402"]
+# Скрипты запускаются как файлы, а не как модули пакета, и правят sys.path
+# до импортов — порядок намеренный.
+"scripts/**" = ["E402", "I001"]
+# SIM103 в _is_skip_reply: прямой возврат условия отдал бы объект Match от
+# SILENCE_PATTERN.match(), а не bool, как объявлено в сигнатуре. Цепочка
+# guard-clause'ов здесь и честнее по типу, и читается ровнее.
+"bot/brain.py" = ["SIM103"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# DeprecationWarning из СВОЕГО кода — ошибка. Раньше это были две отдельные
+# настройки в двух конфигах (cigilbot.* и panel.*), теперь один список.
+filterwarnings = [
+    "error::DeprecationWarning:cigilbot.*",
+    "error::DeprecationWarning:panel.*",
+]
+markers = [
+    "slow: тесты на реальных данных из БД (прогон истории чата)",
+]
+
+[tool.mypy]
+# bot/ здесь нет намеренно: чат-бот писался без аннотаций, и включать его
+# значит утонуть в шуме. panel/bots_api.py — тот же непроверяемый код,
+# просто переехавший в пакет панели (бывшая панель нейроботов).
+files = [
+    "cigilbot",
+    "paths.py",
+    "panel/auth.py",
+    "panel/moderation_api.py",
+    "panel/registry_api.py",
+    "panel/server.py",
+    "tests",
+]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+
+# Библиотеки без типов — не наша забота
+[[tool.mypy.overrides]]
+module = ["lingua.*", "twitchio.*", "aiosqlite.*", "streamlink.*"]
+ignore_missing_imports = true
+
+# bot.* и panel.bots_api не аннотированы (см. files выше). follow_imports =
+# "skip", а не только ignore_missing_imports: модули лежат рядом и потому
+# НАХОДИМЫ, а значит mypy начал бы их разбирать по ссылкам из проверяемого
+# кода и выдавать ошибки в том, что проверять не просили.
+[[tool.mypy.overrides]]
+module = ["bot.*", "panel.bots_api"]
+follow_imports = "skip"
+ignore_errors = true
+ignore_missing_imports = true

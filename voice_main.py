@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from bot import paths
+import paths
 from bot.audio_source import build_source
 from bot.config import load_config
 from bot.voice import VoiceListener

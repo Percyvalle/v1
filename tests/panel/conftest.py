@@ -30,7 +30,7 @@ import panel.registry_api as registry_api
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore
 from panel.auth import SESSION_KEY, _list_profile_channels
-from panel.paths import PanelRoots
+from paths import PanelRoots
 
 # Канал тестового профиля — нужен для по-канальных ролей (role_for_profile
 # резолвит broadcaster_id -> channel через Registry, см. panel/auth.py).
@@ -59,7 +59,7 @@ async def tmp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     await registry.close()
     # Три разных корня, в проде все разные, в тесте все в одной tmp-папке:
     #   ROOT        — состояние модерации (mod.*.db), var/cigilbot
-    #   SRC_ROOT    — исходники (config/moderation.yml), apps/cigilbot
+    #   SRC_ROOT    — исходники (config/moderation.yml), корень проекта
     #   REGISTRY_DB — единственный реестр каналов, var/registry.db
     monkeypatch.setattr(moderation_api, "ROOT", tmp_path)
     monkeypatch.setattr(moderation_api, "SRC_ROOT", tmp_path)
@@ -86,9 +86,8 @@ def app_client(db_path: Path, tmp_root: Path) -> TestClient:
     # найти канал по broadcaster_id через Registry — без него тест получил
     # бы VIEWER независимо от того, что записал login_as (см. DEFAULT_TEST_CHANNEL).
     #
-    # all_at: в проде три корня разные (.env в корне монорепо, registry.db в
-    # apps/cigilbot, .env.<profile> в apps/twitch-bots), а здесь всё лежит в
-    # одной tmp-папке — как и было до переезда панели, когда корень был один.
+    # all_at: в проде корни разные — исходники и .env в корне проекта,
+    # registry.db в var/ — а здесь оба указывают в одну tmp-папку.
     app.state.panel_roots = PanelRoots.all_at(tmp_root)
 
     @app.post("/test/set_session")

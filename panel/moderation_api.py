@@ -36,7 +36,7 @@ from cigilbot.executor import parse_payload
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore, PatternInput
 from panel.auth import require_authenticated, role_for_profile
-from panel.paths import CIGILBOT_ROOT, CIGILBOT_VAR, REGISTRY_DB
+from paths import MOD_VAR, REGISTRY_DB, REPO_ROOT
 
 # Где лежат mod.<broadcaster_id>.db и registry.db. Раньше это был
 # `Path(__file__).parent.parent` — панель жила внутри Cigilbot, корень
@@ -46,11 +46,11 @@ from panel.paths import CIGILBOT_ROOT, CIGILBOT_VAR, REGISTRY_DB
 #
 # Блок sys.path, стоявший здесь же, переехал в panel/__init__.py — иначе
 # каждый модуль пакета чинил бы пути заново.
-ROOT = CIGILBOT_VAR
+ROOT = MOD_VAR
 
-# Исходники Cigilbot — только ради config/moderation.yml, который экран
+# Корень проекта — только ради config/moderation.yml, который экран
 # Settings читает и пишет. Это конфиг, а не состояние: он под git.
-SRC_ROOT = CIGILBOT_ROOT
+SRC_ROOT = REPO_ROOT
 
 router = APIRouter(prefix="/api/moderation")
 

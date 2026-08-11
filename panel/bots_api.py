@@ -41,26 +41,23 @@ from pydantic import BaseModel
 # не имели вообще никакой проверки авторизации, потому что require_authenticated
 # существовал только "после" них по тексту файла и никогда не подключался.
 # panel.auth не импортирует этот модуль (проверено), цикла нет.
-from bot import paths as bot_paths
+import paths
 from bot.twitch_helix import HelixResolveError, HelixResolver
 from cigilbot.registry_store import RegistryStore
 from panel.auth import require_role_min
-from panel.paths import BOT_ROOT, BOT_VAR, ENV_FILE, MAIN_PROFILE, REGISTRY_DB, VENV_PYTHON
+from paths import BOT_VAR, ENV_FILE, MAIN_PROFILE, PROMPTS_DIR, REGISTRY_DB, REPO_ROOT, VENV_PYTHON
 
 log = logging.getLogger("panel.bots")
 
-# Раньше здесь был один `ROOT = Path(__file__).parent.parent`, и он означал
-# сразу три вещи: корень проекта, место .env и место БД. Совпадение
-# развалилось дважды — когда панель уехала в apps/panel, и когда рабочее
-# состояние уехало в var/. Теперь каталоги названы по смыслу (paths.py).
+# ROOT — корень проекта: .env.<profile>, prompts/, main.py.
+# VAR — рабочее состояние бота: bot.db, usage.json, логи, pid.
 #
-# ROOT — исходники apps/twitch-bots: .env.<profile>, prompts/, main.py.
-ROOT = BOT_ROOT
-
-# VAR — рабочее состояние: bot.db, registry.db, usage.json, логи, pid.
+# Раньше это был один `Path(__file__).parent.parent`, означавший сразу и
+# корень проекта, и место .env, и место БД. Совпадение развалилось дважды —
+# когда панель уехала в отдельный каталог, и когда состояние уехало в var/.
+ROOT = REPO_ROOT
 VAR = BOT_VAR
 
-PROMPTS_DIR = ROOT / "prompts"
 CHANNEL_HISTORY_FILE = VAR / "panel_state" / "channel_history.json"
 MAX_CHANNEL_HISTORY = 8
 PROMPT_HISTORY_DIR = VAR / "panel_state" / "prompt_history"
@@ -180,7 +177,7 @@ router = APIRouter()
 
 def _env_file_for(profile: str) -> Path:
     """Профиль "main" читается из КОРНЕВОГО .env монорепо, не из
-    apps/twitch-bots/.env — после слияния панелей общий конфиг живёт в
+    .env — после слияния панелей общий конфиг живёт в
     одном файле на весь репозиторий (см. panel/paths.py). Остальные
     профили остались рядом с main.py, как и были."""
     if profile == MAIN_PROFILE:
@@ -351,10 +348,10 @@ def _start(profile: str, script: str, pid_file: Path, log_out: Path, log_err: Pa
     """Обёрнуто в _pid_lock() — см. docstring там же. Проверка
     _is_running() внутри лока, а не только у вызывающей стороны
     (start_profile), закрывает гонку между двумя параллельными вызовами."""
-    # До _pid_lock: lock-файл лежит рядом с pid-файлом в var/twitch-bots/run,
+    # До _pid_lock: lock-файл лежит рядом с pid-файлом в var/bot/run,
     # и без каталога os.open(O_CREAT) упадёт раньше запуска. На чистом клоне
     # var/ не существует — он целиком в .gitignore.
-    bot_paths.ensure_dirs()
+    paths.ensure_dirs()
 
     with _pid_lock(pid_file):
         if _is_running(pid_file):

@@ -28,15 +28,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-# panel/__init__.py уже положил apps/twitch-bots и apps/cigilbot в sys.path —
-# без этого импорты ниже не разрешились бы (см. докстринг там же).
 from cigilbot.store import ModerationStore
 from panel.auth import load_panel_auth_config
 from panel.auth import router as auth_router
 from panel.bots_api import router as bots_router
 from panel.moderation_api import router as moderation_router
-from panel.paths import CIGILBOT_VAR, ENV_FILE, MAIN_PROFILE, PanelRoots
 from panel.registry_api import router as registry_router
+from paths import ENV_FILE, MAIN_PROFILE, MOD_DB, MOD_VAR, PanelRoots
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -49,7 +47,7 @@ def db_path(profile: str) -> Path:
     не действовал на экране модерации. Победила mod.db — bot.db принадлежит
     боту и пересоздаётся им на каждом старте через executescript без
     версионирования, тогда как здесь есть настоящие миграции."""
-    return CIGILBOT_VAR / f"mod.{profile}.db" if profile != MAIN_PROFILE else CIGILBOT_VAR / "mod.db"
+    return MOD_VAR / f"mod.{profile}.db" if profile != MAIN_PROFILE else MOD_DB
 
 
 # lifespan с supervisor'ом отсюда убран. Панель держала фоновую задачу,
