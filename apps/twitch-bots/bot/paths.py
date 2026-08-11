@@ -30,6 +30,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 VAR = REPO_ROOT / "var" / "twitch-bots"
 
+# Channel Registry — один на монорепо, вне var/twitch-bots (см. подробнее
+# в cigilbot/paths.py, где живёт его реализация RegistryStore). Раньше у
+# этого проекта был свой registry.db и своя реализация ChannelRegistry;
+# обе убраны, когда реестры схлопнули в один.
+REGISTRY_DB = REPO_ROOT / "var" / "registry.db"
+
 LOGS = VAR / "logs"
 
 # pid- и lock-файлы запущенных процессов. Отдельно от логов и БД: это

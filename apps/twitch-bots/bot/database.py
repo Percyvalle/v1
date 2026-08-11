@@ -1,6 +1,4 @@
-import json
 import time
-from typing import Any
 
 import aiosqlite
 
@@ -20,19 +18,17 @@ CREATE TABLE IF NOT EXISTS recent_messages (
     created_at REAL NOT NULL
 );
 
--- Исходящая очередь чата для Cigilbot (отдельный процесс/проект, своя БД
--- mod.<instance>.db). main.py пишет сюда каждое сообщение чата вместо
--- прямого in-process вызова ModerationEngine.observe(); Cigilbot открывает
--- своё соединение к ЭТОМУ файлу (bot.<instance>.db) только для этой одной
--- таблицы и поллит её в фоне. WAL-режим (включается ниже) — обязателен,
--- иначе параллельная запись/чтение из двух процессов будет блокироваться.
-CREATE TABLE IF NOT EXISTS mod_inbox (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at REAL NOT NULL,
-    event_json TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending'
-);
-CREATE INDEX IF NOT EXISTS idx_mod_inbox_status ON mod_inbox(status);
+-- mod_inbox здесь больше не создаётся. Это была исходящая очередь чата
+-- для отдельного процесса модерации: main.py писал сюда каждое сообщение
+-- вместо прямого вызова ModerationEngine.observe(), а Cigilbot открывал
+-- своё соединение к ЭТОМУ файлу и поллил её в фоне.
+--
+-- Движок модерации теперь живёт в процессе бота (см. cigilbot/pipeline.py),
+-- и очередь стала очередью в памяти — таблица не нужна. В существующих
+-- bot.db она остаётся лежать: SQLite её не удаляет, а дропать самим значило
+-- бы уничтожить ещё не разобранные сообщения у того, кто обновился с
+-- непустой очередью. Прочитать их всё равно больше некому, так что после
+-- обновления таблицу можно дропнуть вручную.
 
 -- panel_admins здесь больше не создаётся. ADMIN-оверрайды ролей панели
 -- пережили полный круг: сначала общий список mod_panel_users на обе
@@ -58,9 +54,10 @@ class Database:
 
     async def connect(self) -> None:
         self._conn = await aiosqlite.connect(self._path)
-        # WAL — обязателен для mod_inbox: Cigilbot открывает своё отдельное
-        # соединение к этому же файлу параллельно (см. SCHEMA выше), и без
-        # WAL конкурентная запись/чтение блокировались бы друг на друга.
+        # WAL заводился ради mod_inbox — второй процесс держал своё
+        # соединение к этому же файлу. Такого процесса больше нет, но режим
+        # оставлен: панель по-прежнему читает bot.db параллельно с ботом
+        # (экран Viewers/Chat feed), и это ровно тот же сценарий.
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
@@ -112,32 +109,9 @@ class Database:
         rows = await cursor.fetchall()
         return [(row["username"], row["content"]) for row in reversed(rows)]
 
-    # -- исходящая очередь для Cigilbot (см. SCHEMA::mod_inbox) -----------
-
-    async def enqueue_chat_event(self, event: dict[str, Any]) -> None:
-        """Кладёт сериализованный ChatEvent в очередь для Cigilbot.
-        Не ждёт ответа и не блокирует event_message — Cigilbot читает эту
-        таблицу из своего процесса, независимо от того, запущен он сейчас
-        или нет (задания просто накопятся, пока Cigilbot не поднимется)."""
-        await self._conn.execute(
-            "INSERT INTO mod_inbox (created_at, event_json, status) VALUES (?, ?, 'pending')",
-            (time.time(), json.dumps(event, ensure_ascii=False)),
-        )
-        await self._conn.commit()
-
-    async def prune_mod_inbox(self, *, older_than_seconds: float, keep_pending: bool = True) -> int:
-        """Чистит обработанные записи mod_inbox, чтобы очередь не росла
-        бесконечно при активном чате. keep_pending=True никогда не трогает
-        status='pending' — даже если Cigilbot долго не забирал задания, они
-        не потеряются, только 'done' старше порога удаляются."""
-        cutoff = time.time() - older_than_seconds
-        status_filter = "status = 'done'" if keep_pending else "status != 'pending'"
-        cursor = await self._conn.execute(
-            f"DELETE FROM mod_inbox WHERE {status_filter} AND created_at < ?",
-            (cutoff,),
-        )
-        await self._conn.commit()
-        return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount > 0 else 0
+    # enqueue_chat_event/prune_mod_inbox убраны вместе с самой очередью:
+    # движок модерации переехал в этот же процесс и получает события
+    # напрямую (см. cigilbot/pipeline.py::ModerationHub.submit).
 
     # ADMIN-оверрайды ролей панели читаются и пишутся через
     # ModerationStore (mod_panel_users) — get_panel_role/upsert_panel_admin/

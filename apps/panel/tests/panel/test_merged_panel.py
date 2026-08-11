@@ -45,7 +45,8 @@ class TestEnvProfileChannels:
         (repo / ".env").write_text("TWITCH_CHANNEL=streamer\n", encoding="utf-8")
 
         roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+            repo=repo, bot=bot, cigilbot=tmp_path,
+            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
         )
         assert _list_env_profile_channels(roots) == {"main": "streamer"}
 
@@ -58,7 +59,8 @@ class TestEnvProfileChannels:
         (bot / ".env.second").write_text("TWITCH_CHANNEL=#SecondChannel\n", encoding="utf-8")
 
         roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+            repo=repo, bot=bot, cigilbot=tmp_path,
+            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
         )
         # Канал нормализуется (без #, нижний регистр) — как и везде в auth.py.
         assert _list_env_profile_channels(roots) == {
@@ -79,7 +81,8 @@ class TestEnvProfileChannels:
         (bot / ".env.blank").write_text("TWITCH_CHANNEL=\n", encoding="utf-8")
 
         roots = PanelRoots(
-            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+            repo=repo, bot=bot, cigilbot=tmp_path,
+            bot_var=tmp_path, cigilbot_var=tmp_path, var=tmp_path,
         )
         assert _list_env_profile_channels(roots) == {"main": "main_channel"}
 
@@ -177,3 +180,18 @@ class TestPanelRoots:
         assert roots.bot_var == bot_paths.VAR
         assert roots.cigilbot_var == cigilbot_paths.VAR
         assert roots.repo == bot_paths.REPO_ROOT == cigilbot_paths.REPO_ROOT
+
+    def test_registry_is_one_database_for_everyone(self) -> None:
+        """Реестров было два — свой у бота и зеркало у модерации, которые
+        синхронизировала панель. Пока это были разные процессы, зеркало
+        имело смысл; теперь оба движка в одном процессе, и расхождение
+        двух копий стало бы багом внутри него. Все трое обязаны смотреть
+        в один файл, и он вне каталога любого из движков."""
+        from bot import paths as bot_paths
+        from cigilbot import paths as cigilbot_paths
+
+        roots = PanelRoots.default()
+        assert roots.registry_db == bot_paths.REGISTRY_DB == cigilbot_paths.REGISTRY_DB
+        assert roots.registry_db == roots.repo / "var" / "registry.db"
+        assert not roots.registry_db.is_relative_to(roots.bot_var)
+        assert not roots.registry_db.is_relative_to(roots.cigilbot_var)

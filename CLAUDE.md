@@ -16,17 +16,39 @@ Monorepo of three directories: two engines and the panel that drives both.
 |---|---|---|---|
 | Purpose | AI chat companion (DeepSeek) + voice input | Anti-spam moderation engine | Web panel for both, port 8766 |
 | Own `pyproject.toml` | yes | yes | yes |
-| Tests | none | 462 across 26 files | 132 across 3 files |
+| Tests | none | 479 across 27 files | 135 across 3 files |
 
-**The two engines are deliberately separate processes.** A crash in moderation must not take
-down the bot that is talking in chat, and `mod_inbox` between them gives backpressure: if
-moderation stalls, chat does not wait. Do not merge `main.py` and `consumer.py`.
+**Moderation runs inside the bot process.** It used to be a separate process per channel
+(`consumer.py`) fed by a `mod_inbox` table on disk, under a supervisor. That boundary is gone:
+`main.py` builds a `ModerationHub` (`cigilbot/pipeline.py`) that holds one `ModerationEngine`
+per channel and reconciles the set against the Channel Registry itself.
 
-**The panel is deliberately one process.** It used to be two apps on 8765 and 8766, and
-because the port is part of the browser origin, that cost a second login for no benefit —
-both screens would live and die with the same uvicorn anyway. `apps/panel` imports from both
-`bot.*` and `cigilbot.*`; that cross-import is normal **for the panel only**. The engines
-still must not import each other.
+What survived the merge, and must keep surviving:
+
+- **Reading chat never waits for moderation.** `hub.submit()` is *not* a coroutine — it drops
+  the event into an in-memory queue and returns. Make it `async` and every chat message starts
+  paying for a SQLite write and a Helix round-trip.
+- **Per-channel state stays separate** — one engine, one queue, one `mod.<id>.db` per channel.
+  The engine is stateful (sliding window, clusters); one shared engine would be wrong, not
+  merely slower.
+- **Strict ordering inside a channel** — a single consumer task per queue, no parallelism.
+
+What it cost, deliberately: the queue no longer survives a crash and is no longer unbounded.
+`mod_inbox` lived on disk and piled up harmlessly while moderation was down; the in-memory
+queue is capped at `QUEUE_MAXSIZE` and **drops** events when full, because waiting would push
+backpressure into the IRC read. Drops are counted and logged. Crash isolation is likewise
+gone — mitigated by every background loop catching its own exceptions, so one channel failing
+does not disturb the others, but they now share a process.
+
+**The panel is deliberately one process, and a separate one.** It used to be two apps on 8765
+and 8766, and because the port is part of the browser origin, that cost a second login for no
+benefit. It stays out of the bot process for the opposite reason: it computes and executes
+nothing, only writing `desired_state`, patterns and Attack Mode into the databases the bot
+reads — so it can crash and restart without touching moderation. That used to be false: the
+supervisor lived inside the panel, so closing it stopped restart-on-crash for consumers.
+
+`apps/panel` imports from both `bot.*` and `cigilbot.*`, and `main.py` now imports
+`cigilbot.pipeline`. Two processes total: the bot (chat + moderation) and the panel.
 
 One `.venv`, one `.env`, both in the repo root — the panel cannot be assembled from two
 separate environments. Voice dependencies (~600 MB) are optional, in `requirements-voice.txt`.
@@ -72,55 +94,46 @@ cd apps\panel
 ..\..\.venv\Scripts\python -m panel.server               # port 8766, both screens
 ```
 
-That is normally the whole thing: the supervisor inside the panel starts and stops consumers
-from each channel's `desired_state`, and the panel can start `main.py` itself. Manual launch
-is for debugging only:
+The panel can start `main.py` itself from the Registry screen; that is the second and last
+process. Manually:
 
 ```powershell
 cd apps\twitch-bots
-..\..\.venv\Scripts\python main.py                       # Twitch IRC
+..\..\.venv\Scripts\python main.py                       # Twitch IRC + moderation
 ..\..\.venv\Scripts\python voice_main.py                 # only if VOICE_ENABLED=true
-
-cd ..\cigilbot
-..\..\.venv\Scripts\python -m cigilbot.consumer <broadcaster_id>   # one per channel
 ```
 
-`consumer.py` takes a **numeric `broadcaster_id`**, not a channel name, and the channel must
-already exist in `registry.db`.
+Moderation needs no separate launch and no supervisor: `main.py` starts an engine for every
+channel whose `desired_state` is `running` and follows changes to that itself.
 
 ## Architecture
 
-### How the two engines talk
+### How chat reaches the engine
 
-Through a **file on disk**, with no HTTP in the hot path and no shared code:
+In-process, through an `asyncio.Queue`:
 
 ```
-apps/twitch-bots/main.py                  apps/cigilbot/cigilbot/consumer.py
-  reads Twitch IRC                          owns the long-lived ModerationEngine
-  writes every message   --mod_inbox-->     drains the queue, analyses, writes
-  into bot.db                                verdicts into mod.<broadcaster_id>.db
-  (never waits for a reply)
+apps/twitch-bots/main.py                  cigilbot/pipeline.py (same process)
+  reads Twitch IRC                          ModerationHub, one engine per channel
+  hub.submit(event)      --queue-->         consumer task analyses, writes
+  (returns immediately)                      verdicts into mod.<broadcaster_id>.db
 ```
 
-`mod_inbox` is a table inside `bot.db` — a file belonging to the **other** project.
-`consumer.py` opens its own connection to that same file (WAL makes this safe) and polls it.
-If Cigilbot is down, messages accumulate; nothing is lost and nothing blocks. The path is
-`BOT_PROJECT_ROOT`, defaulting to `../twitch-bots`.
+`submit()` routes by channel login (twitchio only knows the login) into the pipeline keyed by
+`broadcaster_id` (stable across renames); `_reconcile` keeps that mapping fresh. Unknown
+channel → `False` and a counter, not an exception: the bot may sit in a channel whose
+moderation is switched off in the panel.
 
-There is now **no** HTTP path between them. Channel Registry mirroring used to be
-`twitch-bots/panel/server.py` → `POST /api/registry/channels` on 8766 with the shared secret
-`INTERNAL_SYNC_TOKEN`; both ends are the same process since the panel merge, so
-`panel/bots_api.py::api_add_channel` writes the mirror directly and the "neighbour is
-unreachable" failure mode is gone. The endpoint still exists in `panel/registry_api.py`,
-still token-guarded, as an entry point for an external caller — nothing internal uses it.
+There is **no** HTTP anywhere between components, and no `mod_inbox` table. Channel Registry
+mirroring is gone too — `POST /api/registry/channels` survives in `panel/registry_api.py`,
+still token-guarded, purely as an entry point for an external caller.
 
 ### Databases — five distinct file families, easy to confuse
 
 | File | Owner | Contents |
 |---|---|---|
-| `var/twitch-bots/bot.db` | twitch-bots | viewers, chat history, `mod_inbox` |
-| `var/twitch-bots/registry.db` | twitch-bots | Channel Registry — **source of truth** for which channels exist |
-| `var/cigilbot/registry.db` | cigilbot | independent mirror of the above |
+| `var/twitch-bots/bot.db` | twitch-bots | viewers, chat history |
+| `var/registry.db` | shared | Channel Registry — the **only** copy: which channels exist and their `desired_state` |
 | `var/cigilbot/mod.db` | cigilbot | only `mod_panel_users` — ADMIN role overrides for **both** panel screens |
 | `var/cigilbot/mod.<broadcaster_id>.db` | cigilbot | all moderation state — **one file per channel**, because the engine is stateful |
 
@@ -132,8 +145,9 @@ across (higher role wins on conflict, never downgrades).
 ### `var/` — all runtime state, outside the source trees
 
 ```
-var/twitch-bots/   bot.db, registry.db, usage.json, voice_input.txt, logs/, run/, panel_state/
-var/cigilbot/      registry.db, mod.db, mod.<broadcaster_id>.db, logs/, run/
+var/registry.db    Channel Registry — shared, belongs to neither engine
+var/twitch-bots/   bot.db, usage.json, voice_input.txt, logs/, run/, panel_state/
+var/cigilbot/      mod.db, mod.<broadcaster_id>.db, logs/, run/
 ```
 
 The whole directory is one line in `.gitignore`, replacing a list of masks (`*.db`, `*.pid`,
@@ -222,10 +236,10 @@ meaning "the project root". `panel/paths.py` names the three roots explicitly, a
 `PanelRoots` carries them through `app.state.panel_roots`:
 
 - `repo` — the single `.env`. **`_write_env_values` writes `TWITCH_MOD_*` here and
-  `cigilbot/consumer.py` reads them from here.** If these two paths ever diverge, the panel
+  the moderation pipeline reads them from here.** If these two paths ever diverge, the panel
   will report a token was obtained while every ban fails with 401.
 - `bot` — `apps/twitch-bots`: `.env.<profile>`, `bot.db`, `main.py`, `prompts/`.
-- `cigilbot` — `apps/cigilbot`: `registry.db`, `mod.db`, `mod.<broadcaster_id>.db`.
+- `cigilbot` — `apps/cigilbot`: engine sources and `config/`; `mod.*.db` live in `var/`.
 
 Roles are derived from Twitch on every login, not stored: broadcaster → `OWNER`, channel
 moderator (Helix `GET /moderation/moderators`) → `MODERATOR`, anyone else → `VIEWER`. `ADMIN`
@@ -297,15 +311,17 @@ Phase 1 is closed and verified on live channels; Phase 2 (Alerts) is next.
 Findings from a full read of the tree — worth fixing, and worth knowing about before trusting
 a comment or a template:
 
-1. `twitch-bots/registry.db` and `cigilbot/registry.db` are two mirrors of one list, now
-   written by the same process one after the other — the HTTP hop that justified the split
-   is gone. Collapsing them into one is a data-model change (it touches
-   `main.py::_load_initial_channels`, `consumer.py`, the supervisor and both registry
-   routers), not a layout one, which is why it was left alone.
+1. `docs/*.html` and `docs/moderation-plan.md` still describe the two-panel split and the
+   `mod_inbox` handoff as current. They are the design record for Phase 1 and were not
+   rewritten; read them as history, not as the present shape.
 2. `apps/twitch-bots/scripts/import_registry.py` is a one-off from the Registry migration.
    It still works; the Cigilbot copy of it was deleted because that project dropped
    `.env.<profile>` in Phase 1, so it could only ever print "импортировать нечего".
-3. The engines' own `docs/*.html` still describe the two-panel split as current.
+3. `registry_store.py` still carries comments saying `process_status` is written "only by
+   supervisor.py". The writer is now `ModerationHub`; the rule (one writer, and never the
+   panel) is unchanged.
+4. `bot.db` keeps its `mod_inbox` table and `panel_admins` table on existing installs. Nothing
+   reads either; both are safe to drop by hand once `merge_panel_admins.py` has run.
 
 Earlier entries here are fixed and gone: missing `streamlink`/`av` (now pinned in the root
 `requirements.txt`/`requirements-voice.txt`), undocumented `.env` keys (the root

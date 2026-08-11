@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
 import panel.moderation_api as moderation_api
+import panel.registry_api as registry_api
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore
 from panel.auth import SESSION_KEY, _list_profile_channels
@@ -56,11 +57,14 @@ async def tmp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         broadcaster_id=DEFAULT_TEST_BROADCASTER_ID, login=DEFAULT_TEST_CHANNEL, registered_by="manual"
     )
     await registry.close()
-    # ROOT — состояние (mod.*.db, registry.db), SRC_ROOT — исходники
-    # (config/moderation.yml). В проде это разные каталоги (var/cigilbot и
-    # apps/cigilbot), в тесте обе подмены ведут в одну tmp-папку.
+    # Три разных корня, в проде все разные, в тесте все в одной tmp-папке:
+    #   ROOT        — состояние модерации (mod.*.db), var/cigilbot
+    #   SRC_ROOT    — исходники (config/moderation.yml), apps/cigilbot
+    #   REGISTRY_DB — единственный реестр каналов, var/registry.db
     monkeypatch.setattr(moderation_api, "ROOT", tmp_path)
     monkeypatch.setattr(moderation_api, "SRC_ROOT", tmp_path)
+    monkeypatch.setattr(moderation_api, "REGISTRY_DB", tmp_path / "registry.db")
+    monkeypatch.setattr(registry_api, "REGISTRY_DB", tmp_path / "registry.db")
     return tmp_path
 
 

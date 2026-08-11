@@ -42,11 +42,10 @@ from pydantic import BaseModel
 # существовал только "после" них по тексту файла и никогда не подключался.
 # panel.auth не импортирует этот модуль (проверено), цикла нет.
 from bot import paths as bot_paths
-from bot.registry import ChannelRegistry
 from bot.twitch_helix import HelixResolveError, HelixResolver
 from cigilbot.registry_store import RegistryStore
 from panel.auth import require_role_min
-from panel.paths import BOT_ROOT, BOT_VAR, CIGILBOT_VAR, ENV_FILE, MAIN_PROFILE, VENV_PYTHON
+from panel.paths import BOT_ROOT, BOT_VAR, ENV_FILE, MAIN_PROFILE, REGISTRY_DB, VENV_PYTHON
 
 log = logging.getLogger("panel.bots")
 
@@ -629,20 +628,6 @@ async def api_new_profile(
     return JSONResponse({"created": profile})
 
 
-# Зеркало Channel Registry на стороне Cigilbot. Раньше сюда шёл HTTP-запрос
-# на http://127.0.0.1:8766/api/registry/channels с общим секретом
-# INTERNAL_SYNC_TOKEN — единственный HTTP-путь между двумя процессами
-# панелей. Процесс теперь один, и запрос был бы обращением приложения к
-# самому себе: лишний сетевой хоп, который вдобавок молча пропускался,
-# если INTERNAL_SYNC_TOKEN не задан (а в .env.example его и не было).
-#
-# Сам эндпоинт /api/registry/channels оставлен на месте (см.
-# panel/registry_api.py) — он по-прежнему защищён токеном и остаётся
-# рабочим входом для внешнего вызова, просто панель больше им не
-# пользуется для себя.
-CIGILBOT_REGISTRY_DB = CIGILBOT_VAR / "registry.db"
-
-
 @router.post("/api/channels")
 async def api_add_channel(payload: dict, session: tuple[str, str] = require_role_min("OWNER")):
     """Добавляет канал в Channel Registry (registry.db) — один Twitch-бот-
@@ -683,45 +668,23 @@ async def api_add_channel(payload: dict, session: tuple[str, str] = require_role
         return JSONResponse({"error": f"канал {login!r} не найден на Twitch"}, status_code=404)
     user = users[0]
 
-    registry = ChannelRegistry(str(VAR / "registry.db"))
+    # Одна запись в один Registry. Раньше здесь было две: своя БД плюс
+    # зеркало на стороне Cigilbot, куда сначала уходил HTTP-запрос с общим
+    # секретом INTERNAL_SYNC_TOKEN, а после слияния панелей — прямая запись
+    # во второй файл. Реестр стал один на монорепо (см. panel/paths.py::
+    # REGISTRY_DB), поэтому зеркалить некуда и нечего: вместе с зеркалом
+    # исчез и класс отказа "копии разошлись".
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
-        record = await registry.upsert_channel(broadcaster_id=user.id, login=user.login)
+        record = await registry.upsert_channel(
+            broadcaster_id=user.id, login=user.login, display_name=user.display_name,
+            registered_by="panel",
+        )
     finally:
         await registry.close()
 
-    # Зеркалирование в registry.db Cigilbot — теперь прямой записью в тот же
-    # файл, куда писал бы обработчик /api/registry/channels. Две БД остались
-    # (у каждого движка свой Registry, см. CLAUDE.md), объединён только
-    # процесс панели — а значит исчез и класс отказа "сосед недоступен":
-    # писать некому, кроме самого себя.
-    cigilbot_synced = False
-    try:
-        mirror = RegistryStore(str(CIGILBOT_REGISTRY_DB))
-        await mirror.connect()
-        try:
-            await mirror.upsert_channel(
-                broadcaster_id=record.broadcaster_id,
-                login=record.login,
-                display_name=user.display_name,
-                registered_by="sync",
-            )
-            cigilbot_synced = True
-        finally:
-            await mirror.close()
-    except Exception:
-        # Канал уже создан в собственном registry.db выше — сбой зеркала не
-        # должен отменять основную операцию, ровно как и раньше при
-        # недоступности соседнего процесса (cigilbot_synced=false в ответе).
-        log.exception("Не удалось зеркалировать канал %r в registry.db Cigilbot", login)
-
-    return JSONResponse(
-        {
-            "broadcaster_id": record.broadcaster_id,
-            "login": record.login,
-            "cigilbot_synced": cigilbot_synced,
-        }
-    )
+    return JSONResponse({"broadcaster_id": record.broadcaster_id, "login": record.login})
 
 
 @router.post("/api/start")

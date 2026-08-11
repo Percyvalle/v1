@@ -312,7 +312,7 @@ async def _list_profile_channels(roots: PanelRoots) -> dict[str, str]:
 
     result = _list_env_profile_channels(roots)
 
-    registry = RegistryStore(str(roots.cigilbot_var / "registry.db"))
+    registry = RegistryStore(str(roots.registry_db))
     await registry.connect()
     try:
         channels = await registry.list_channels(status=None)

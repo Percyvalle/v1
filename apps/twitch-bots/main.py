@@ -13,12 +13,22 @@ from bot import paths
 from bot.brain import Brain
 from bot.config import load_config
 from bot.database import Database
-from bot.registry import ChannelRegistry
 from bot.voice_queue import VoiceQueue
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Движок модерации живёт в соседнем проекте, но теперь в ЭТОМ процессе:
+# между чтением чата и модерацией больше нет границы процессов и очереди
+# mod_inbox на диске (см. cigilbot/pipeline.py — там же про то, что за это
+# заплачено). Отсюда и импорт через apps/, которого раньше не было.
+CIGILBOT_ROOT = paths.REPO_ROOT / "apps" / "cigilbot"
+if str(CIGILBOT_ROOT) not in sys.path:
+    sys.path.insert(0, str(CIGILBOT_ROOT))
+
+from cigilbot.pipeline import ModerationHub  # noqa: E402
+from cigilbot.registry_store import RegistryStore  # noqa: E402
 
 cfg = load_config()
 
@@ -205,13 +215,19 @@ brain = (
 )
 voice_queue = VoiceQueue(cfg.queue_path)
 
-# Модерация (движок, панель, исполнение BAN/TIMEOUT) — отдельный процесс
-# Cigilbot (../cigilbot), не часть main.py. Этот бот только пишет каждое
-# сообщение чата в очередь mod_inbox (в своей же bot.db, см.
-# bot/database.py::SCHEMA) и продолжает читать чат дальше, не дожидаясь
-# ответа — Cigilbot читает эту очередь в фоне из своего процесса
-# (cigilbot/consumer.py), main.py никогда не блокируется и не падает,
-# если Cigilbot медленный или не запущен.
+# Модерация работает внутри этого процесса: ModerationHub держит движок на
+# каждый активный канал и сверяет их состав с Channel Registry (замена
+# consumer.py + supervisor.py, которых больше нет).
+#
+# Чтение чата от модерации по-прежнему не зависит: hub.submit() кладёт
+# событие в очередь в памяти и возвращается сразу, разбор идёт в фоновой
+# задаче. Разница с прежним устройством в том, что очередь больше не
+# переживает падение процесса и не безгранична — при переполнении события
+# отбрасываются, а не копятся, как копились в mod_inbox на диске.
+moderation_hub = ModerationHub(
+    registry_db_path=paths.REGISTRY_DB,
+    moderation_enabled=cfg.moderation_enabled,
+)
 
 
 async def _load_initial_channels() -> list[str]:
@@ -224,8 +240,12 @@ async def _load_initial_channels() -> list[str]:
     cfg.channel остаётся как fallback — если Registry пуст (например при
     первом запуске до того, как через панель добавили хоть один канал),
     бот всё равно подключается к каналу из .env, чтобы не остаться совсем
-    без подключения."""
-    registry = ChannelRegistry(str(paths.VAR / "registry.db"))
+    без подключения.
+
+    RegistryStore, а не собственный ChannelRegistry этого проекта: реестр
+    стал один на монорепо (см. bot/paths.py::REGISTRY_DB). Вторая
+    реализация читала свою копию той же таблицы и удалена."""
+    registry = RegistryStore(str(paths.REGISTRY_DB))
     await registry.connect()
     try:
         channels = await registry.list_channels(status="active")
@@ -260,10 +280,14 @@ class ChatBot(commands.Bot):
     async def event_ready(self):
         await db.connect()
         if cfg.moderation_enabled:
+            # Здесь, а не при импорте модуля: hub создаёт asyncio-задачи, а
+            # event_loop к этому моменту уже крутится. Отдельного процесса
+            # и отдельного запуска модерации больше нет — она поднимается
+            # вместе с ботом.
+            await moderation_hub.start()
             log.info(
-                "Модерация включена: сообщения чата пишутся в mod_inbox для Cigilbot "
-                "(запустите .venv\\Scripts\\python -m cigilbot.consumer <broadcaster_id> "
-                "в соседнем проекте Cigilbot на каждый канал, если ещё не запущено)"
+                "Модерация включена, каналов под наблюдением: %s",
+                ", ".join(moderation_hub.active_channels) or "нет активных в Registry",
             )
         log.info("Бот подключился как %s к каналам: %s", self.nick, ", ".join(self.channels_list))
 
@@ -348,25 +372,18 @@ class ChatBot(commands.Bot):
     async def event_raw_usernotice(self, channel, tags: dict) -> None:
         """FALSE-BAN-001 аудита: Twitch присылает USERNOTICE с msg-id=raid,
         когда канал получает реальный рейд — twitchio отдаёт это событие
-        бесплатно, без EventSub-подписки. Раньше это напрямую звало
-        moderation_engine.mark_raid_started() в этом же процессе; теперь
-        модерация — процесс Cigilbot, поэтому кладём событие в ту же
-        очередь mod_inbox, что и обычные сообщения чата (см.
-        cigilbot/consumer.py::_handle_inbox_item, kind="raid_started")."""
+        бесплатно, без EventSub-подписки. Движок снижает чувствительность
+        на время рейда (см. engine.py, RAID_CONTEXT_SECONDS)."""
         if not cfg.moderation_enabled or tags.get("msg-id") != "raid":
             return
         raider = tags.get("msg-param-displayName") or tags.get("login", "?")
         viewer_count = tags.get("msg-param-viewerCount", "?")
         channel_name = channel.name if channel is not None else ""
-        log.info("Рейд от %s (%s зрителей) на канал %s — передаю Cigilbot", raider, viewer_count, channel_name)
-        try:
-            # channel обязателен: один бот слушает несколько каналов сразу
-            # (initial_channels списком), без него Cigilbot не смог бы
-            # определить, чей consumer должен снизить чувствительность на
-            # время рейда (см. cigilbot/inbox.py::ChatInbox.get_pending).
-            await db.enqueue_chat_event({"kind": "raid_started", "channel": channel_name})
-        except Exception:
-            log.exception("Не удалось поставить raid_started в очередь модерации")
+        log.info("Рейд от %s (%s зрителей) на канал %s", raider, viewer_count, channel_name)
+        # channel обязателен: один бот слушает несколько каналов сразу
+        # (initial_channels списком), и снизить чувствительность нужно
+        # только у того канала, куда пришёл рейд.
+        moderation_hub.mark_raid(channel_name)
 
     async def event_message(self, message):
         if message.echo:
@@ -379,7 +396,7 @@ class ChatBot(commands.Bot):
         await db.log_message(username, content)
 
         if cfg.moderation_enabled:
-            await self._enqueue_moderation(message, username, content)
+            self._submit_moderation(message, username, content)
 
         await self.handle_commands(message)
 
@@ -389,15 +406,18 @@ class ChatBot(commands.Bot):
                 return
             await self._respond(message, username, content)
 
-    async def _enqueue_moderation(self, message, username: str, content: str) -> None:
-        """Кладёт сообщение чата в mod_inbox для Cigilbot вместо прямого
-        in-process вызова ModerationEngine.observe() (движок теперь живёт
-        в отдельном процессе — см. ../cigilbot/cigilbot/consumer.py).
+    def _submit_moderation(self, message, username: str, content: str) -> None:
+        """Отдаёт сообщение движку модерации, живущему в этом же процессе.
+
+        НЕ корутина и ничего не ждёт: hub.submit() кладёт событие в очередь
+        в памяти и возвращается сразу (см. cigilbot/pipeline.py). Если бы
+        здесь стоял await observe(), каждое сообщение чата оплачивало бы
+        запись в SQLite и поход в Helix за возрастом аккаунта — а это
+        главное, что защищала прежняя схема с mod_inbox и отдельным
+        процессом.
 
         Сбой здесь никогда не должен ронять обработку сообщения ботом —
         модерация лишь наблюдает, а не является частью основного пути.
-        Не ждём и не блокируемся на Cigilbot: enqueue — это просто INSERT
-        в свою же локальную БД, дальше бот сразу читает следующее сообщение.
         """
         author = message.author
         user_id = author.id if author else None
@@ -409,7 +429,7 @@ class ChatBot(commands.Bot):
 
         tags = message.tags or {}
         try:
-            await db.enqueue_chat_event(
+            moderation_hub.submit(
                 {
                     "kind": "chat_message",
                     "user_id": user_id,
@@ -418,9 +438,9 @@ class ChatBot(commands.Bot):
                     "timestamp": time.time(),
                     # message.channel.name, не cfg.channel — один бот слушает
                     # несколько каналов сразу, событие должно нести КОНКРЕТНЫЙ
-                    # канал, из которого пришло это сообщение (см.
-                    # cigilbot/inbox.py::ChatInbox.get_pending, фильтрует по
-                    # этому полю, чтобы consumer видел только свой канал).
+                    # канал, из которого пришло это сообщение: по нему
+                    # ModerationHub находит нужный движок (состояние каналов
+                    # не смешивается, см. cigilbot/pipeline.py).
                     "channel": message.channel.name if message.channel else "",
                     "display_name": author.display_name or username,
                     "message_id": message.id or "",
@@ -434,7 +454,7 @@ class ChatBot(commands.Bot):
                 }
             )
         except Exception:
-            log.exception("Не удалось поставить сообщение в очередь модерации")
+            log.exception("Не удалось передать сообщение движку модерации")
 
     def _is_addressed_to_bot(self, content: str) -> bool:
         if content.startswith("!"):

@@ -7,10 +7,10 @@
 
 Панель — процесс, отдельный от бота, и Twitch-подключения не имеет. Кнопка
 BAN ALL кладёт задание в mod_action_queue (в mod.<broadcaster_id>.db, собственной
-БД Cigilbot) — исполняет его cigilbot/executor.py внутри процесса-консьюмера
-Cigilbot (см. cigilbot/consumer.py), который поллит очередь так же, как
-раньше это делал main.py._poll_action_queue (см. docs/moderation-plan.md,
-раздел 7). Здесь только пишем в очередь и читаем результат/аудит обратно.
+БД Cigilbot) — исполняет его cigilbot/executor.py внутри процесса бота
+(см. cigilbot/pipeline.py), который поллит очередь так же, как раньше это
+делал main.py._poll_action_queue (см. docs/moderation-plan.md, раздел 7).
+Здесь только пишем в очередь и читаем результат/аудит обратно.
 
 Роли и проверка прав — здесь, в роутере, а не в JS на фронте (раздел 7
 плана: "проверка прав в роутере, а не в UI"). Роль и логин берутся из
@@ -36,7 +36,7 @@ from cigilbot.executor import parse_payload
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore, PatternInput
 from panel.auth import require_authenticated, role_for_profile
-from panel.paths import CIGILBOT_ROOT, CIGILBOT_VAR
+from panel.paths import CIGILBOT_ROOT, CIGILBOT_VAR, REGISTRY_DB
 
 # Где лежат mod.<broadcaster_id>.db и registry.db. Раньше это был
 # `Path(__file__).parent.parent` — панель жила внутри Cigilbot, корень
@@ -107,7 +107,7 @@ async def _open_store(broadcaster_id: str) -> ModerationStore:
 async def api_profiles(
     session: tuple[str, str] = Depends(require_authenticated),
 ) -> list[dict[str, str]]:
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         channels = await registry.list_channels(status=None)

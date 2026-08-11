@@ -39,8 +39,13 @@ CIGILBOT_ROOT = REPO_ROOT / "apps" / "cigilbot"
 # может импортировать их оттуда раньше, чем отработает sys.path-бутстрап в
 # panel/__init__.py, а сам бутстрап импортирует этот модуль. Три строки
 # дубля дешевле, чем ленивый импорт в каждой точке использования.
-BOT_VAR = REPO_ROOT / "var" / "twitch-bots"
-CIGILBOT_VAR = REPO_ROOT / "var" / "cigilbot"
+VAR = REPO_ROOT / "var"
+BOT_VAR = VAR / "twitch-bots"
+CIGILBOT_VAR = VAR / "cigilbot"
+
+# Channel Registry — один на монорепо, поэтому прямо в var/, а не внутри
+# каталога одного из движков: им пользуются оба и панель (см. cigilbot/paths.py).
+REGISTRY_DB = VAR / "registry.db"
 
 # Единственный .env монорепо (см. докстринг выше про связку с consumer.py).
 ENV_FILE = REPO_ROOT / ".env"
@@ -82,10 +87,17 @@ class PanelRoots:
     """apps/cigilbot: движок модерации и config/ — исходники."""
 
     bot_var: Path
-    """var/twitch-bots: bot.db, registry.db, usage.json, логи, pid."""
+    """var/twitch-bots: bot.db, usage.json, логи, pid."""
 
     cigilbot_var: Path
-    """var/cigilbot: registry.db, mod.db, mod.<broadcaster_id>.db, логи, pid."""
+    """var/cigilbot: mod.db, mod.<broadcaster_id>.db, логи, pid."""
+
+    var: Path
+    """var/: общее на монорепо — сейчас это единственный registry.db."""
+
+    @property
+    def registry_db(self) -> Path:
+        return self.var / "registry.db"
 
     @classmethod
     def default(cls) -> PanelRoots:
@@ -95,9 +107,12 @@ class PanelRoots:
             cigilbot=CIGILBOT_ROOT,
             bot_var=BOT_VAR,
             cigilbot_var=CIGILBOT_VAR,
+            var=VAR,
         )
 
     @classmethod
     def all_at(cls, path: Path) -> PanelRoots:
         """Все корни в одной папке — для тестов."""
-        return cls(repo=path, bot=path, cigilbot=path, bot_var=path, cigilbot_var=path)
+        return cls(
+            repo=path, bot=path, cigilbot=path, bot_var=path, cigilbot_var=path, var=path
+        )

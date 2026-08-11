@@ -7,24 +7,20 @@
 и cookie одного процесса не видна другому даже на localhost. Теперь экраны
 снова в одном приложении, и вход снова один.
 
-Что осталось от разделения и почему это не откат в чистом виде: движки
-по-прежнему живут в отдельных процессах (main.py, consumer.py) и общаются
-через mod_inbox. Объединена ровно панель — то есть тот слой, где разделение
-стоило двух логинов и ничего не давало взамен, потому что оба экрана всё
-равно падали бы вместе с одним и тем же uvicorn. Изоляция, ради которой
-проекты разнесены (падение движка модерации не должно ронять чтение IRC),
-живёт на границе процессов движков, а не панелей.
+Панель осталась единственным процессом, который не слился ни с чем: движок
+модерации переехал внутрь бота (cigilbot/pipeline.py), и в системе теперь
+ровно два процесса — бот и эта панель. Панель не считает и не исполняет
+ничего сама: пишет desired_state, паттерны и Attack Mode в БД, а читает их
+оттуда бот. Это единственная причина, по которой она может падать и
+подниматься независимо, не задевая модерацию.
 
 Запуск: ..\\..\\.venv\\Scripts\\python -m panel.server
 Откроется на http://localhost:8766/
 """
 
-import asyncio
 import hashlib
 import os
 import secrets
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -35,7 +31,6 @@ from starlette.middleware.sessions import SessionMiddleware
 # panel/__init__.py уже положил apps/twitch-bots и apps/cigilbot в sys.path —
 # без этого импорты ниже не разрешились бы (см. докстринг там же).
 from cigilbot.store import ModerationStore
-from cigilbot.supervisor import supervisor_loop
 from panel.auth import load_panel_auth_config
 from panel.auth import router as auth_router
 from panel.bots_api import router as bots_router
@@ -57,18 +52,16 @@ def db_path(profile: str) -> Path:
     return CIGILBOT_VAR / f"mod.{profile}.db" if profile != MAIN_PROFILE else CIGILBOT_VAR / "mod.db"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Фоновая задача внутри процесса панели, не отдельный OS-процесс — см.
-    # докстринг cigilbot/supervisor.py про компромисс этого решения.
-    task = asyncio.create_task(supervisor_loop(str(CIGILBOT_VAR / "registry.db")))
-    try:
-        yield
-    finally:
-        task.cancel()
-
-
-app = FastAPI(lifespan=lifespan)
+# lifespan с supervisor'ом отсюда убран. Панель держала фоновую задачу,
+# которая поднимала и останавливала consumer-процессы по desired_state
+# каналов. Движок модерации теперь живёт в процессе бота и сверяется с
+# Registry сам (cigilbot/pipeline.py::ModerationHub), поэтому панели
+# следить не за чем: она по-прежнему ПИШЕТ desired_state через
+# /api/registry/channels/{id}/start|stop, но исполняет его бот.
+#
+# Побочный выигрыш: раньше падение панели останавливало restart-on-crash
+# для консьюмеров. Теперь модерация не зависит от того, открыта ли панель.
+app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(moderation_router)
 app.include_router(registry_router)

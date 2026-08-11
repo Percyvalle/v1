@@ -1,17 +1,20 @@
-"""Channel Registry: зеркалирование каналов и управление процессами.
+"""Channel Registry: состав каналов и желаемое состояние модерации.
 
-Экран ботов — источник правды по составу каналов (там оператор жмёт
-"Добавить канал"). POST /channels принимает уведомление о новом/изменённом
-канале и зеркалирует его в собственный registry.db Cigilbot — два
-независимых Channel Registry (см. docs/master-plan.html, направление 00),
-не общая БД.
+Реестр каналов один на монорепо (var/registry.db). Их было два — свой у
+twitch-bots и зеркало у Cigilbot, которые синхронизировал POST /channels;
+пока это были разные процессы, зеркало имело смысл. Оба движка теперь в
+одном процессе, и две копии одной таблицы стали способом получить
+расхождение внутри него, а не защитой от недоступности соседа.
 
-Внутри монорепо этим эндпоинтом никто не пользуется. Пока панелей было
-две, panel/bots_api.py звал его по HTTP из своего процесса в чужой; теперь
-процесс один и зеркало пишется прямой записью в ту же БД (см.
-bots_api.py::api_add_channel). Эндпоинт оставлен рабочим входом для
-внешнего вызова — например, если реестром однажды станет управлять что-то
-за пределами этого репозитория.
+POST /channels пережил схлопывание как вход для ВНЕШНЕГО вызова — если
+реестром однажды станет управлять что-то за пределами репозитория. Изнутри
+им никто не пользуется: панель пишет в реестр напрямую.
+
+start/stop выставляют desired_state. Исполняет его бот: ModerationHub
+внутри main.py сверяется с реестром и поднимает или гасит движок канала
+(см. cigilbot/pipeline.py). Панель ничего не запускает — раньше этим
+занимался supervisor в её же процессе, и её падение останавливало
+restart-on-crash для консьюмеров.
 
 Аутентификация НЕ через cookie-сессию panel/auth.py (это не человек за
 браузером, а сервер-сервер вызов) — общий секрет INTERNAL_SYNC_TOKEN в
@@ -34,10 +37,7 @@ from pydantic import BaseModel
 from cigilbot import bot_process_control
 from cigilbot.registry_store import ChannelRecord, RegistryStore
 from panel.auth import require_authenticated
-from panel.paths import CIGILBOT_VAR, ENV_FILE
-
-# Где лежит registry.db — см. тот же комментарий в moderation_api.py.
-ROOT = CIGILBOT_VAR
+from panel.paths import ENV_FILE, REGISTRY_DB
 
 router = APIRouter(prefix="/api/registry")
 
@@ -114,7 +114,7 @@ async def sync_channel(
     if not payload.broadcaster_id.strip() or not payload.login.strip():
         raise HTTPException(status_code=422, detail="broadcaster_id и login обязательны")
 
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         existing = await registry.get_channel(payload.broadcaster_id)
@@ -146,7 +146,7 @@ def _channel_status_dict(record: ChannelRecord) -> dict[str, object]:
 async def list_channels(
     session: tuple[str, str] = Depends(require_authenticated),
 ) -> list[dict[str, object]]:
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         channels = await registry.list_channels(status=None)
@@ -166,13 +166,13 @@ async def _get_or_404(registry: RegistryStore, broadcaster_id: str) -> ChannelRe
 async def start_channel(
     broadcaster_id: str, session: tuple[str, str] = Depends(require_authenticated)
 ) -> dict[str, object]:
-    """Выставляет desired_state='running' — реальный запуск процесса
-    происходит на следующем тике supervisor'а (см. cigilbot/supervisor.py),
-    не синхронно из этого хендлера."""
+    """Выставляет desired_state='running' — движок канала поднимется на
+    следующем тике сверки в процессе бота (см.
+    cigilbot/pipeline.py::ModerationHub), не синхронно из этого хендлера."""
     role, _ = session
     _require_role(role, "ADMIN")
 
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         record = await _get_or_404(registry, broadcaster_id)
@@ -190,7 +190,7 @@ async def stop_channel(
     role, _ = session
     _require_role(role, "ADMIN")
 
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         record = await _get_or_404(registry, broadcaster_id)
@@ -211,7 +211,7 @@ async def reset_crash(
     role, _ = session
     _require_role(role, "ADMIN")
 
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(REGISTRY_DB))
     await registry.connect()
     try:
         await _get_or_404(registry, broadcaster_id)
