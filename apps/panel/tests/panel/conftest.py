@@ -29,6 +29,7 @@ import panel.moderation_api as moderation_api
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore
 from panel.auth import SESSION_KEY, _list_profile_channels
+from panel.paths import PanelRoots
 
 # Канал тестового профиля — нужен для по-канальных ролей (role_for_profile
 # резолвит broadcaster_id -> channel через Registry, см. panel/auth.py).
@@ -73,10 +74,14 @@ def app_client(db_path: Path, tmp_root: Path) -> TestClient:
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret-not-for-prod")
     app.include_router(moderation_api.router)
-    # role_for_profile (panel/auth.py) читает app.state.panel_root, чтобы
+    # role_for_profile (panel/auth.py) читает app.state.panel_roots, чтобы
     # найти канал по broadcaster_id через Registry — без него тест получил
     # бы VIEWER независимо от того, что записал login_as (см. DEFAULT_TEST_CHANNEL).
-    app.state.panel_root = tmp_root
+    #
+    # all_at: в проде три корня разные (.env в корне монорепо, registry.db в
+    # apps/cigilbot, .env.<profile> в apps/twitch-bots), а здесь всё лежит в
+    # одной tmp-папке — как и было до переезда панели, когда корень был один.
+    app.state.panel_roots = PanelRoots.all_at(tmp_root)
 
     @app.post("/test/set_session")
     async def _set_session(request: Request, role: str, login: str = "test_user") -> dict[str, str]:
@@ -94,7 +99,9 @@ def app_client(db_path: Path, tmp_root: Path) -> TestClient:
         # наоборот, приходят из Twitch-статуса за конкретный канал, поэтому
         # остаются привязаны только к DEFAULT_TEST_CHANNEL.
         if role in ("ADMIN", "OWNER"):
-            roles = dict.fromkeys((await _list_profile_channels(moderation_api.ROOT)).values(), role)
+            roles = dict.fromkeys(
+                (await _list_profile_channels(PanelRoots.all_at(moderation_api.ROOT))).values(), role
+            )
             roles.setdefault(DEFAULT_TEST_CHANNEL, role)
         else:
             roles = {DEFAULT_TEST_CHANNEL: role}

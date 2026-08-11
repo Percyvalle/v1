@@ -40,10 +40,11 @@ markers = [
 ]
 
 [tool.mypy]
-# panel/consumer.py здесь был опечаткой (consumer живёт в cigilbot/consumer.py
-# и уже покрыт записью "cigilbot") — mypy падал на несуществующем файле, не
-# добравшись до анализа, поэтому типы этого проекта не проверялись вообще.
-files = ["cigilbot", "tests", "panel/moderation_api.py", "panel/auth.py", "panel/moderation_server.py", "panel/registry_api.py"]
+# Панель уехала в apps/panel вместе со своим mypy-конфигом — здесь остался
+# только движок. Ровно та же ошибка ("can't read file", mypy падает не
+# добравшись до анализа) уже случалась в этом файле из-за опечатки
+# panel/consumer.py, и цена у неё та же: типы не проверяются вообще, молча.
+files = ["cigilbot", "tests"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true

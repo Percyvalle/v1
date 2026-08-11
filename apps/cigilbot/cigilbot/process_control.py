@@ -26,7 +26,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+
+# Общий venv в корне монорепо, а не .venv внутри проекта: venv стало одно на
+# оба проекта и панель, потому что панель импортирует и bot.*, и cigilbot.*
+# и не собирается в один процесс из двух раздельных окружений.
+# apps/cigilbot -> apps -> корень репозитория.
+VENV_PYTHON = ROOT.parent.parent / ".venv" / "Scripts" / "python.exe"
 
 # broadcaster_id всегда приходит из Twitch Helix (числовой ID) — но
 # start_consumer()/pid_file() также достижимы из HTTP-пути

@@ -34,18 +34,17 @@ CREATE TABLE IF NOT EXISTS mod_inbox (
 );
 CREATE INDEX IF NOT EXISTS idx_mod_inbox_status ON mod_inbox(status);
 
--- ADMIN-оверрайд ролей панели управления ботами (panel/server.py + panel/
--- auth.py::_resolve_role). Раньше это была mod_panel_users в общей БД с
--- панелью модерации (обе панели делили один список админов) — теперь это
--- две независимые панели с независимыми списками: panel_admins здесь
--- обслуживает ТОЛЬКО panel/server.py, mod_panel_users в Cigilbot (своя
--- mod.<profile>.db) обслуживает ТОЛЬКО панель модерации.
-CREATE TABLE IF NOT EXISTS panel_admins (
-    login TEXT PRIMARY KEY,
-    role TEXT NOT NULL,
-    created_at REAL NOT NULL,
-    last_seen REAL
-);
+-- panel_admins здесь больше не создаётся. ADMIN-оверрайды ролей панели
+-- пережили полный круг: сначала общий список mod_panel_users на обе
+-- панели, потом (когда панели разнесли по разным процессам) отдельный
+-- panel_admins здесь и mod_panel_users в Cigilbot, теперь — снова один
+-- список в mod_panel_users, потому что панель снова одна.
+--
+-- В уже существующих bot.db таблица остаётся лежать как есть: SQLite её
+-- не удаляет, а удалять самим значило бы потерять данные у того, кто не
+-- прогнал перенос. Разовый scripts/merge_panel_admins.py в apps/panel
+-- переносит записи в mod_panel_users; после него таблица не читается
+-- никем и её можно дропнуть вручную.
 """
 
 # Сколько последних сообщений чата держим для контекста ответов бота
@@ -140,30 +139,8 @@ class Database:
         await self._conn.commit()
         return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount > 0 else 0
 
-    # -- ADMIN-оверрайд ролей панели (см. SCHEMA::panel_admins) -----------
-
-    async def get_panel_role(self, login: str) -> str | None:
-        cursor = await self._conn.execute(
-            "SELECT role FROM panel_admins WHERE login = ?", (login.lower(),)
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else None
-
-    async def upsert_panel_admin(self, login: str, role: str) -> None:
-        now = time.time()
-        await self._conn.execute(
-            """
-            INSERT INTO panel_admins (login, role, created_at, last_seen)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(login) DO UPDATE SET role = excluded.role, last_seen = excluded.last_seen
-            """,
-            (login.lower(), role, now, now),
-        )
-        await self._conn.commit()
-
-    async def list_panel_admins(self) -> list[aiosqlite.Row]:
-        self._conn.row_factory = aiosqlite.Row
-        cursor = await self._conn.execute(
-            "SELECT login, role, created_at, last_seen FROM panel_admins ORDER BY login"
-        )
-        return list(await cursor.fetchall())
+    # ADMIN-оверрайды ролей панели читаются и пишутся через
+    # ModerationStore (mod_panel_users) — get_panel_role/upsert_panel_admin/
+    # list_panel_admins убраны отсюда вместе со слиянием панелей в один
+    # процесс. Бот ролями панели не пользовался никогда: эти методы
+    # существовали ради panel/server.py, которого больше нет.

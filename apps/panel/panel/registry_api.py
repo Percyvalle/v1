@@ -20,19 +20,18 @@ from __future__ import annotations
 
 import hmac
 import os
-import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-ROOT = Path(__file__).parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from cigilbot import bot_process_control
+from cigilbot.registry_store import ChannelRecord, RegistryStore
+from panel.auth import require_authenticated
+from panel.paths import CIGILBOT_ROOT, ENV_FILE
 
-from cigilbot import bot_process_control  # noqa: E402
-from cigilbot.registry_store import ChannelRecord, RegistryStore  # noqa: E402
-from panel.auth import require_authenticated  # noqa: E402
+# Где лежит registry.db — см. тот же комментарий в moderation_api.py.
+ROOT = CIGILBOT_ROOT
 
 router = APIRouter(prefix="/api/registry")
 
@@ -61,7 +60,10 @@ def _read_env(env_file: Path, key: str) -> str:
 
 
 def _internal_sync_token() -> str:
-    return os.environ.get("INTERNAL_SYNC_TOKEN", "") or _read_env(ROOT / ".env", "INTERNAL_SYNC_TOKEN")
+    # ENV_FILE, а не ROOT/".env": .env переехал в корень монорепо, тогда как
+    # ROOT здесь — apps/cigilbot (место registry.db). До слияния это был
+    # один и тот же каталог, и разница ничего не значила.
+    return os.environ.get("INTERNAL_SYNC_TOKEN", "") or _read_env(ENV_FILE, "INTERNAL_SYNC_TOKEN")
 
 
 def _require_internal_token(request: Request) -> None:

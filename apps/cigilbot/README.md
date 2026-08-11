@@ -43,26 +43,29 @@ main.py пишет туда и продолжает читать чат даль
 
 ## Установка
 
+Окружение и `.env` — общие на весь монорепо, ставятся один раз из корня:
+
 ```powershell
-cd apps\cigilbot
+cd ..\..
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Заполни `.env`:
+Заполни корневой `.env`:
 - `PANEL_TWITCH_CLIENT_ID` / `PANEL_TWITCH_CLIENT_SECRET` — отдельное
   Twitch-приложение для входа в панель (см. комментарии в `.env.example`)
 - `PANEL_TWITCH_CHANNEL`, `PANEL_SESSION_SECRET`
 - `TWITCH_MOD_*` — не трогать руками, заполняются кнопкой "Получить токен
   бота" в Settings панели
-- `INTERNAL_SYNC_TOKEN` — общий секрет с twitch-bots для синхронизации
-  Registry; должен совпадать в обоих проектах
+- `INTERNAL_SYNC_TOKEN` — нужен только внешнему вызову
+  `POST /api/registry/channels`; сама панель зеркалит Registry напрямую,
+  без HTTP, потому что оба конца теперь в одном процессе
 
 Конфигурация каналов **не в `.env`**: источник правды — `registry.db`, канал
-добавляется через панель twitch-bots (порт 8765) и зеркалируется сюда. Файлов
-`.env.<профиль>` здесь больше нет — они остались от старой per-channel
-модели, убранной в Phase 1.
+добавляется на экране `/bots` панели и зеркалируется сюда. Файлов
+`.env.<профиль>` здесь нет — они остались от старой per-channel модели,
+убранной в Phase 1 (у twitch-bots они, наоборот, живы).
 
 Если `../twitch-bots` лежит не рядом с этим проектом, укажи путь явно
 через `BOT_PROJECT_ROOT` в `.env`.
@@ -70,19 +73,22 @@ copy .env.example .env
 ## Запуск
 
 ```powershell
-# Окно 1 — панель модерации (порт 8766)
-.\.venv\Scripts\python -m panel.moderation_server
-
-# Окно 2 — обработчик очереди, по одному на канал (нужен всегда, пока
-# MODERATION_ENABLED=true в twitch-bots). Аргумент — broadcaster_id из
-# registry.db, не имя канала: ник можно сменить, числовой id стабилен.
-.\.venv\Scripts\python -m cigilbot.consumer 168599565
+# Панель (порт 8766) — общая на оба проекта, живёт в apps/panel
+cd ..\panel
+..\..\.venv\Scripts\python -m panel.server
 ```
 
-Consumer'ы можно не запускать руками: `supervisor.py` внутри панели поднимает
-и останавливает их сам по `desired_state` канала в Registry.
+Consumer'ы запускать руками не нужно: `supervisor.py` внутри панели поднимает
+и останавливает их сам по `desired_state` канала в Registry. Для отладки:
 
-Панель откроется на `http://localhost:8766/moderation`. Вход через Twitch:
+```powershell
+cd apps\cigilbot
+# Аргумент — broadcaster_id из registry.db, не имя канала: ник можно
+# сменить, числовой id стабилен.
+..\..\.venv\Scripts\python -m cigilbot.consumer 168599565
+```
+
+Панель откроется на `http://localhost:8766/`. Вход через Twitch:
 владелец канала получает роль OWNER, модераторы канала — MODERATOR,
 остальные — VIEWER; ADMIN назначается вручную существующим OWNER/ADMIN
 через экран Panel Users.
@@ -104,21 +110,21 @@ cigilbot/inbox.py      — чтение mod_inbox из чужого файла �
 cigilbot/store.py      — персистентность (своя mod.<broadcaster_id>.db)
 cigilbot/supervisor.py — авто старт/стоп consumer-процессов по Registry
 cigilbot/registry_store.py — свой registry.db (зеркало из twitch-bots)
-panel/                 — веб-панель модерации (FastAPI, порт 8766)
-panel/auth.py          — вход через Twitch OAuth (независимая копия — та
-                          же логика есть и в twitch-bots/panel/auth.py,
-                          но с разным хранилищем ADMIN-оверрайдов)
 config/moderation.yml  — веса и пороги детекторов
 config/channels/       — профиль языка/настроек по конкретному каналу
 scripts/replay.py      — прогнать историю чата (из twitch-bots) через движок
 scripts/report.py      — сводка shadow-статистики и false positives
 ```
 
+Панели здесь больше нет: она переехала в [`../panel`](../panel) и стала
+общей на оба проекта. Вместе с ней уехали `panel/auth.py` (существовавший
+в двух почти одинаковых копиях) и тесты панели.
+
 ## Разработка
 
 ```powershell
-.\.venv\Scripts\pip install -r requirements-dev.txt
-.\.venv\Scripts\pytest
-.\.venv\Scripts\ruff check .
-.\.venv\Scripts\mypy
+cd apps\cigilbot
+..\..\.venv\Scripts\pytest
+..\..\.venv\Scripts\ruff check .
+..\..\.venv\Scripts\mypy
 ```

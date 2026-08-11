@@ -24,27 +24,21 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# В тестах допустимы длинные литералы-фикстуры и «магические» числа порогов
-"tests/**" = ["E402"]
 # SIM103 в _is_skip_reply: прямой возврат условия отдал бы объект Match от
 # SILENCE_PATTERN.match(), а не bool, как объявлено в сигнатуре. Цепочка
 # guard-clause'ов здесь и честнее по типу, и читается ровнее.
 "bot/brain.py" = ["SIM103"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["error::DeprecationWarning:bot.*"]
-markers = [
-    "slow: тесты на реальных данных из БД (прогон истории чата)",
-]
-
-[tool.mypy]
-# Строгая типизация — только для panel/auth.py (модерация со своим mypy-
-# конфигом переехала в отдельный проект ../Cigilbot). Остальной бот
-# писался без аннотаций, включать его сюда значит утонуть в шуме.
-files = ["panel/auth.py", "tests/panel"]
-python_version = "3.12"
-strict = true
-warn_unreachable = true
+# Секций [tool.pytest.ini_options] и [tool.mypy] здесь больше нет.
+#
+# Все тесты этого проекта (30 штук) проверяли panel/auth.py, а панель
+# переехала в apps/panel — вместе с ней уехали и они. Оказалось, что 28 из
+# 29 тестов были дословной копией тестов панели модерации: два процесса
+# держали две копии одного auth.py, и тесты к ним тоже были в двух копиях.
+# Осталась одна, в apps/panel/tests/panel/test_auth.py.
+#
+# mypy проверял ровно те же два пути ("panel/auth.py", "tests/panel"),
+# поэтому проверять здесь стало нечего: остальной бот писался без
+# аннотаций и был исключён намеренно. Пустой files = [] заставил бы mypy
+# ругаться, а не молчать, поэтому секция убрана целиком — конфиг для
+# панели теперь в apps/panel/pyproject.toml.

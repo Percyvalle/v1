@@ -1,0 +1,44 @@
+# Общие зависимости монорепо. Один venv в корне на оба проекта и панель —
+# раньше venv было два, по одному на apps/*, и это работало ровно до тех пор,
+# пока панель не стала одним процессом: panel/server.py импортирует и bot.*
+# (bot.registry, bot.twitch_helix, bot.brain), и cigilbot.* (store, supervisor),
+# то есть обязан видеть зависимости обоих проектов сразу.
+#
+# Слияние обошлось без конфликтов: все шесть пакетов, которые раньше были
+# продублированы в двух requirements.txt, были запинены на одинаковые версии
+# (httpx, aiosqlite, python-dotenv, fastapi, uvicorn, websockets, itsdangerous).
+#
+#   python -m venv .venv
+#   .\.venv\Scripts\pip install -r requirements-dev.txt
+#
+# Голосовой ввод сюда НЕ входит — см. requirements-voice.txt (~600 МБ,
+# нужен только при VOICE_ENABLED=true).
+
+# -- чат-бот (apps/twitch-bots) ---------------------------------------------
+twitchio==2.10.0
+openai==1.51.0
+
+# -- движок модерации (apps/cigilbot) ---------------------------------------
+# Конфиг с порогами и весами + определение языка сообщений. lingua точнее
+# langdetect на коротких сообщениях чата; набор языков ограничен в
+# cigilbot/detectors/language.py, чтобы не тянуть в память все модели сразу.
+PyYAML==6.0.3
+lingua-language-detector==2.0.2
+
+# -- общее ------------------------------------------------------------------
+httpx==0.27.2
+aiosqlite==0.20.0
+python-dotenv==1.0.1
+fastapi==0.115.0
+uvicorn==0.32.0
+websockets==13.1
+
+# Панель: подписанные cookie-сессии после входа через Twitch OAuth
+# (starlette.middleware.sessions.SessionMiddleware зависит от этого пакета).
+itsdangerous==2.2.0
+
+# Live/offline статус канала на экране ботов (panel/bots_api.py) и чтение
+# звука стрима в bot/audio_source.py. Раньше отсутствовал в обоих
+# requirements.txt, хотя импортировался на уровне модуля — чистая установка
+# не могла поднять панель вообще.
+streamlink==8.5.0

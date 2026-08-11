@@ -493,6 +493,17 @@ input::placeholder { color: var(--text-faint); }
       Settings
     </div>
 
+    <!-- Ссылки на экран ботов здесь раньше не было вовсе: он жил в другом
+         процессе на 8765, со своей сессией, и вести туда из этой вкладки
+         означало отправить человека логиниться заново. Экраны в одном
+         приложении — переход стал обычной внутренней ссылкой.
+         <a>, а не .nav-item: те переключают экран внутри страницы через JS
+         (data-screen), а это полноценная навигация на другой документ. -->
+    <a class="nav-item" href="/bots" style="text-decoration:none;">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="4.5" width="11" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v2.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="8.5" r="1" fill="currentColor"/><circle cx="10" cy="8.5" r="1" fill="currentColor"/></svg>
+      Боты
+    </a>
+
     <div class="field">
       <label>Профиль бота</label>
       <select id="profile-select"></select>

@@ -33,7 +33,12 @@ CIGILBOT_ROOT = Path(__file__).parent.parent
 BOT_PROJECT_ROOT = Path(
     os.environ.get("BOT_PROJECT_ROOT", str(CIGILBOT_ROOT.parent / "twitch-bots"))
 )
-BOT_VENV_PYTHON = BOT_PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+
+# Общий venv в корне монорепо — не .venv внутри twitch-bots, которого больше
+# нет (см. корневой requirements.txt). Считается от CIGILBOT_ROOT, а не от
+# BOT_PROJECT_ROOT: последний настраивается через переменную окружения и
+# может указывать куда угодно, тогда как venv у монорепо ровно один.
+BOT_VENV_PYTHON = CIGILBOT_ROOT.parent.parent / ".venv" / "Scripts" / "python.exe"
 
 # Профиль twitch-bots, читающий каналы из Registry (см. .env.cigilbot в
 # apps/twitch-bots — единственный профиль без DEEPSEEK_API_KEY, чисто
@@ -133,8 +138,9 @@ def start_bot() -> int:
 
         if not BOT_VENV_PYTHON.exists():
             raise RuntimeError(
-                f"Не найден venv Python в twitch-bots: {BOT_VENV_PYTHON} — "
-                f"проверьте BOT_PROJECT_ROOT"
+                f"Не найден общий venv монорепо: {BOT_VENV_PYTHON} — "
+                f"создайте его в корне: python -m venv .venv && "
+                f".\\.venv\\Scripts\\pip install -r requirements.txt"
             )
 
         LOG_OUT.parent.mkdir(exist_ok=True)

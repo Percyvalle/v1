@@ -1,4 +1,11 @@
-"""Вход в панель модерации через Twitch OAuth.
+"""Вход в панель через Twitch OAuth.
+
+Один модуль на всю панель. Раньше этот файл существовал в двух копиях —
+своя в twitch-bots (порт 8765) и своя в Cigilbot (порт 8766), с одинаковой
+логикой и разным хранилищем ADMIN-оверрайдов; правку в одной приходилось
+переносить в другую руками, и они успели разойтись (баг с необработанным
+httpx.ConnectTimeout в _resolve_roles_by_channel чинился дважды). Панель
+теперь одна, копия одна.
 
 Закрывает дыру раздела 11 плана ("Панель без авторизации"): раньше роль в
 запросе была тем, что клиент сам о себе заявлял в заголовке X-Panel-Role —
@@ -14,14 +21,25 @@ Flow — стандартный Authorization Code Grant:
      роль (OWNER/MODERATOR/VIEWER), кладём в подписанную cookie-сессию
   4. GET /auth/logout      -> очищает сессию
 
-Роль не хранится в panel_admins как источник правды для входа — она
+Роль не хранится в mod_panel_users как источник правды для входа — она
 пересчитывается заново на каждый /auth/callback из актуального списка
-модераторов Twitch. panel_admins (bot/database.py::SCHEMA) остаётся для
-роли ADMIN, которую автоматически из Twitch не вывести (список админов,
-доверенных владельцем панели вручную), и подмешивается к роли из Twitch
-при следующем логине (см. _resolve_role). Это отдельная таблица от
-mod_panel_users в Cigilbot — панель управления ботами и панель модерации
-теперь независимые продукты с независимыми списками админов.
+модераторов Twitch. mod_panel_users (миграция 003) остаётся для роли
+ADMIN, которую автоматически из Twitch не вывести (список админов,
+доверенных владельцем панели вручную) — назначается через
+POST /api/moderation/panel_users существующим OWNER/ADMIN и подмешивается
+к роли из Twitch при следующем логине (см. _resolve_role).
+
+Список ADMIN тоже один. До слияния их было два независимых —
+mod_panel_users в mod.db обслуживал панель модерации, panel_admins в
+bot.db панель ботов, и выданный в одной ADMIN не действовал в другой.
+Победил mod_panel_users: mod.db существует ровно ради состояния панели,
+тогда как bot.db принадлежит боту и пересоздаётся им на каждом старте
+(bot/database.py делает executescript без версионирования).
+
+Перенос содержимого panel_admins — разовым скриптом
+scripts/merge_panel_admins.py, а не миграцией: данные едут между ДВУМЯ
+файлами БД, а миграции mod.db (cigilbot/migrations.py) знают только свой
+собственный файл и не должны зависеть от того, где лежит чужой.
 
 Отдельное Twitch-приложение (PANEL_TWITCH_CLIENT_ID/SECRET) — не то же
 самое, что TWITCH_BOT_TOKEN бота: панели нужен Authorization Code Grant
@@ -44,6 +62,8 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+
+from panel.paths import MAIN_PROFILE, PanelRoots
 
 log = logging.getLogger("panel.auth")
 
@@ -130,20 +150,16 @@ class PanelAuthConfig:
 
 
 def load_panel_auth_config(
-    root: Path, *, env_filename: str = ".env", default_port: int = 8765
+    root: Path, *, env_filename: str = ".env", default_port: int = 8766
 ) -> PanelAuthConfig:
-    """Читает PANEL_TWITCH_* из .env (или env_filename, см. ниже) — тот же
-    построчный парсер, что panel/server.py::read_env(), но без завязки на
-    профиль: вход в панель один на весь процесс, не за каждый профиль бота
-    отдельно.
+    """Читает PANEL_TWITCH_* из .env — тот же построчный парсер, что
+    panel/bots_api.py::read_env(), но без завязки на профиль: вход в панель
+    один на весь процесс, не за каждый профиль бота отдельно.
 
-    env_filename/default_port — для panel/moderation_server.py (порт 8766,
-    отдельный процесс от panel/server.py на 8765, см. его докстринг): у него
-    свой .env.moderation с собственными PANEL_TWITCH_REDIRECT_URI/
-    PANEL_TWITCH_BOT_REDIRECT_URI, чтобы Twitch не путал, на какой из двух
-    независимых процессов возвращать пользователя после логина — общий
-    .env остаётся источником TWITCH_CHANNEL и прочих настроек профилей
-    ботов, не PANEL_* полей."""
+    env_filename/default_port раньше были параметрами переносимости между
+    двумя панелями на разных портах, у каждой со своим .env и своим
+    redirect URI. Панель одна, порт один (8766), .env один — параметры
+    остались только затем, чтобы тесты могли подсунуть свой файл."""
     values: dict[str, str] = {}
     env_file = root / env_filename
     if env_file.exists():
@@ -241,37 +257,68 @@ async def _fetch_viewer(cfg: PanelAuthConfig, user_token: str) -> tuple[str, str
     return data[0]["login"].lower(), data[0]["id"]
 
 
-def _list_profile_channels(root: Path) -> dict[str, str]:
-    """{profile: channel} для каждого известного профиля бота (.env / .env.<profile>).
+def _list_env_profile_channels(roots: PanelRoots) -> dict[str, str]:
+    """{profile: channel_login} по файлам .env / .env.<profile> —
+    профильная модель, которую twitch-bots сохранил (Cigilbot отказался от
+    неё в Phase 1, см. CLAUDE.md про две сосуществующие модели каналов).
 
-    Продублированный, упрощённый вариант panel/server.py::list_profiles() +
-    чтение TWITCH_CHANNEL — не импортирован оттуда по той же причине, что
-    _write_env_values ниже: server.py импортирует panel.auth, обратный
-    импорт создал бы цикл. Используется только для мульти-канальных ролей
-    (см. _resolve_roles_by_channel) — один вошедший может быть модератором
-    на канале профиля A, но не профиля B, роль не может быть одной строкой
-    на всю сессию."""
+    Профиль "main" живёт в корневом .env монорепо, остальные — в
+    .env.<profile> рядом с main.py: слияние панелей свело к одному файлу
+    общий конфиг, но не профили ботов."""
     result: dict[str, str] = {}
-    candidates: list[tuple[str, Path]] = []
-    main_env = root / ".env"
-    if main_env.exists():
-        candidates.append(("main", main_env))
-    for p in sorted(root.glob(".env.*")):
-        if p.name == ".env.example":
-            continue
-        candidates.append((p.name.removeprefix(".env."), p))
+    candidates: list[tuple[str, Path]] = [(MAIN_PROFILE, roots.repo / ".env")]
+    candidates += [
+        (p.name.removeprefix(".env."), p)
+        for p in sorted(roots.bot.glob(".env.*"))
+        if p.name != ".env.example"
+    ]
 
     for profile, env_file in candidates:
-        values: dict[str, str] = {}
+        if not env_file.exists():
+            continue
         for line in env_file.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
+            if not stripped.startswith("TWITCH_CHANNEL="):
                 continue
-            key, _, value = stripped.partition("=")
-            values[key.strip()] = value
-        channel = values.get("TWITCH_CHANNEL", "").strip().lstrip("#").lower()
-        if channel:
-            result[profile] = channel
+            channel = stripped.split("=", 1)[1].strip().lstrip("#").lower()
+            if channel:
+                result[profile] = channel
+            break
+    return result
+
+
+async def _list_profile_channels(roots: PanelRoots) -> dict[str, str]:
+    """Все каналы, по которым вообще имеет смысл считать роль вошедшего —
+    объединение двух моделей каналов, сосуществующих в монорепо:
+
+      * Channel Registry (registry.db) -> {broadcaster_id: login}. Источник
+        правды для модерации, ключ — стабильный числовой Twitch-ID (см.
+        docs/master-plan.html, направление 00).
+      * .env.<profile> в apps/twitch-bots -> {profile: login}. Профильная
+        модель экрана ботов, ключ — имя профиля.
+
+    Объединение, а не выбор одной из двух: role_for_profile получает ключ
+    от вызывающего кода, и это может быть и broadcaster_id (moderation_api),
+    и имя профиля. До слияния панелей каждая копия auth.py знала только про
+    свою модель, и это работало, пока модели жили в разных процессах.
+
+    Ключ словаря называется "profile" по историческим причинам (см.
+    комментарий в panel/moderation_api.py про параметр `profile`).
+
+    Registry читается вторым и затирает совпадения намеренно: если имя
+    профиля случайно совпало с broadcaster_id, права должна определять
+    модель модерации, а не .env-файл, который правится вручную."""
+    from cigilbot.registry_store import RegistryStore
+
+    result = _list_env_profile_channels(roots)
+
+    registry = RegistryStore(str(roots.cigilbot / "registry.db"))
+    await registry.connect()
+    try:
+        channels = await registry.list_channels(status=None)
+    finally:
+        await registry.close()
+    result.update({c.broadcaster_id: c.login for c in channels})
     return result
 
 
@@ -320,7 +367,7 @@ def _resolve_role(*, login: str, is_broadcaster: bool, is_moderator: bool, admin
 
 async def _resolve_roles_by_channel(
     cfg: PanelAuthConfig,
-    root: Path,
+    roots: PanelRoots,
     *,
     login: str,
     user_id: str,
@@ -337,7 +384,7 @@ async def _resolve_roles_by_channel(
     каждый последующий API-запрос, чтобы не звать Helix лишний раз; сессия
     живёт до logout/истечения cookie, актуальность пересчитывается заново
     при следующем /auth/callback, как и раньше для одиночной роли."""
-    channels = set(_list_profile_channels(root).values())
+    channels = set((await _list_profile_channels(roots)).values())
     channels.add(cfg.channel)  # канал панели остаётся в игре, даже без профиля бота
 
     roles: dict[str, str] = {}
@@ -353,7 +400,8 @@ async def _resolve_roles_by_channel(
             # одного проблемного канала, просто не даём по нему прав.
             # Раньше ловился только TwitchAuthError — реальный сбой сети
             # (httpx.ConnectTimeout и т.п.) не был перехвачен и валил весь
-            # /auth/callback с 500 вместо входа без прав на этот канал.
+            # /auth/callback с 500 вместо входа без прав на этот канал (тот
+            # же баг был найден и исправлен в twitch-bots/panel/auth.py).
             log.warning("Не удалось проверить канал %r для ролей входа", channel, exc_info=True)
             continue
         is_broadcaster = login == broadcaster_login
@@ -367,12 +415,18 @@ async def _resolve_roles_by_channel(
 
 def _write_env_values(root: Path, updates: dict[str, str]) -> None:
     """Точечная запись переменных в корневой .env без потери остального
-    файла — тот же приём, что panel/server.py::write_env_values(), но для
+    файла — тот же приём, что panel/bots_api.py::write_env_values(), но для
     основного профиля напрямую (bot-токен один на процесс панели, как и
     PANEL_TWITCH_*, не за каждый профиль бота отдельно). Продублировано, а
-    не импортировано, чтобы избежать циклического импорта: panel/server.py
-    сам импортирует panel.auth (см. docstring выше и moderation_api.py,
-    где применён тот же приём для _db_path)."""
+    не импортировано, чтобы избежать циклического импорта: bots_api сам
+    импортирует panel.auth (см. moderation_api.py, где применён тот же
+    приём для _db_path).
+
+    root здесь — ВСЕГДА PanelRoots.repo, то есть корень монорепо. Сюда
+    после входа под аккаунтом бота ложатся TWITCH_MOD_*, и ровно отсюда их
+    читает cigilbot/consumer.py. Если передать другой корень, панель
+    отрапортует об успешно полученном токене, а баны начнут падать с 401,
+    потому что executor прочитает пустое место (см. paths.py)."""
     env_file = root / ".env"
     if not env_file.exists():
         env_file.write_text("", encoding="utf-8")
@@ -392,8 +446,27 @@ def _write_env_values(root: Path, updates: dict[str, str]) -> None:
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+SESSION_NEXT_KEY = "panel_auth_next"
+DEFAULT_AFTER_LOGIN = "/moderation"
+
+
+def _safe_next(raw: str) -> str:
+    """Куда вернуть пользователя после входа — только внутренний путь.
+
+    Появилось вместе со слиянием панелей: экранов стало два ("/moderation" и
+    "/bots"), и жёсткий редирект на модерацию выкидывал бы с экрана ботов
+    того, кто входил именно туда.
+
+    Принимаем только пути, начинающиеся с одного "/". "//evil.com" браузер
+    трактует как protocol-relative URL, то есть внешний адрес — это классический
+    open redirect, и отличается он от нормального пути ровно одним символом."""
+    if raw.startswith("/") and not raw.startswith("//"):
+        return raw
+    return DEFAULT_AFTER_LOGIN
+
+
 @router.get("/login")
-async def auth_login(request: Request) -> RedirectResponse:
+async def auth_login(request: Request, next: str = DEFAULT_AFTER_LOGIN) -> RedirectResponse:
     cfg: PanelAuthConfig = request.app.state.panel_auth_config
     if not cfg.configured:
         raise HTTPException(
@@ -401,6 +474,12 @@ async def auth_login(request: Request) -> RedirectResponse:
             detail="Вход через Twitch не настроен: заполните PANEL_TWITCH_CLIENT_ID/"
             "PANEL_TWITCH_CLIENT_SECRET/PANEL_TWITCH_CHANNEL в .env",
         )
+
+    # В сессии, а не в _pending_states: тот словарь хранит время создания
+    # state для проверки TTL, и подмешивать туда второе значение значило бы
+    # менять тип ради одной строки. Cookie сессии всё равно доезжает до
+    # /auth/callback — тем же механизмом, что и сама сессия после входа.
+    request.session[SESSION_NEXT_KEY] = _safe_next(next)
 
     _prune_states()
     state = secrets.token_urlsafe(24)
@@ -436,17 +515,17 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     except TwitchAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    store = request.app.state.panel_db_factory()
+    store = request.app.state.moderation_store_factory()
     try:
         await store.connect()
         admin_override = await store.get_panel_role(login)
     finally:
         await store.close()
 
-    root: Path = request.app.state.panel_root
+    roots: PanelRoots = request.app.state.panel_roots
     try:
         roles_by_channel = await _resolve_roles_by_channel(
-            cfg, root, login=login, user_id=user_id,
+            cfg, roots, login=login, user_id=user_id,
             moderated_channel_ids=moderated_channel_ids, admin_override=admin_override,
         )
     except TwitchAuthError as exc:
@@ -462,7 +541,9 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     request.session[SESSION_KEY] = {
         "login": login, "user_id": user_id, "role": role, "roles": roles_by_channel,
     }
-    return RedirectResponse("/moderation")
+    # Экран, с которого начали вход (см. _safe_next). pop, а не get: значение
+    # относится к одному конкретному входу и в следующем не должно всплыть.
+    return RedirectResponse(_safe_next(request.session.pop(SESSION_NEXT_KEY, DEFAULT_AFTER_LOGIN)))
 
 
 @router.get("/logout")
@@ -537,29 +618,31 @@ def require_authenticated(request: Request) -> tuple[str, str]:
     return str(user.get("role", "VIEWER")), str(user.get("login", "аноним"))
 
 
-def role_for_profile(request: Request, profile: str) -> str:
-    """Роль вошедшего для канала КОНКРЕТНОГО профиля бота — не общая роль
-    сессии. session["roles"] — {channel: role}, посчитанный на все известные
+async def role_for_profile(request: Request, profile: str) -> str:
+    """Роль вошедшего для канала КОНКРЕТНОГО канала (параметр называется
+    "profile" по историческим причинам, значение — broadcaster_id, см.
+    комментарий у _list_profile_channels) — не общая роль сессии.
+    session["roles"] — {channel_login: role}, посчитанный на все известные
     каналы разом при входе (см. _resolve_roles_by_channel); здесь просто
-    достаём канал этого profile и смотрим роль по нему.
+    достаём канал этого broadcaster_id и смотрим роль по нему.
 
     ADMIN — исключение из по-канальности: это глобальный ручной оверрайд
     (mod_panel_users), а не Twitch-статус за конкретный канал, поэтому
     _resolve_roles_by_channel уже проставил ADMIN на каждый канал словаря
     одинаково — читать его здесь ничем не отличается от обычного канала.
 
-    Нет сессии или профиль не найден среди известных .env.<profile> ->
-    VIEWER, не исключение: список профилей мог измениться (профиль удалили)
-    между входом и этим запросом, а падать 500 вместо честного "недостаточно
-    прав" на устаревший profile было бы хуже UX без выигрыша в безопасности."""
+    Нет сессии или broadcaster_id не найден в Channel Registry -> VIEWER,
+    не исключение: канал мог быть удалён из Registry между входом и этим
+    запросом, а падать 500 вместо честного "недостаточно прав" на
+    устаревший broadcaster_id было бы хуже UX без выигрыша в безопасности."""
     user = request.session.get(SESSION_KEY)
     if user is None:
         raise HTTPException(status_code=401, detail="Требуется вход через Twitch (/auth/login)")
     roles = user.get("roles")
     if not isinstance(roles, dict):
         return "VIEWER"
-    root: Path = request.app.state.panel_root
-    channel = _list_profile_channels(root).get(profile, "")
+    roots: PanelRoots = request.app.state.panel_roots
+    channel = (await _list_profile_channels(roots)).get(profile, "")
     if not channel:
         return "VIEWER"
     return str(roles.get(channel, "VIEWER"))
@@ -689,9 +772,9 @@ async def _process_bot_callback(
     except TwitchAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    root: Path = request.app.state.panel_root
+    roots: PanelRoots = request.app.state.panel_roots
     _write_env_values(
-        root,
+        roots.repo,
         {
             "TWITCH_MOD_ACCESS_TOKEN": access_token,
             "TWITCH_MOD_REFRESH_TOKEN": refresh_token,
@@ -765,8 +848,8 @@ async def auth_bot_status(request: Request) -> dict[str, object]:
     """Есть ли уже сохранённый токен бота — панель читает .env заново на
     каждый запрос (не кеширует), чтобы отразить ручное редактирование
     файла или обновление токена в фоне executor'ом."""
-    root: Path = request.app.state.panel_root
-    env_file = root / ".env"
+    roots: PanelRoots = request.app.state.panel_roots
+    env_file = roots.repo / ".env"
     values: dict[str, str] = {}
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():

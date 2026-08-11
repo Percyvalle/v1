@@ -18,6 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import panel.auth as auth
 from cigilbot.store import ModerationStore
+from panel.paths import PanelRoots
 
 
 class TestPanelAuthConfig:
@@ -40,14 +41,16 @@ class TestPanelAuthConfig:
         assert cfg.channel == "somechannel"
 
     def test_default_redirect_uri(self, tmp_path: Path) -> None:
+        # 8766 — порт единственной панели. Раньше умолчанием было 8765
+        # (панель нейроботов), а 8766 приходилось передавать явно вторым
+        # процессом; процесс теперь один, и умолчание стало его портом.
         (tmp_path / ".env").write_text("", encoding="utf-8")
         cfg = auth.load_panel_auth_config(tmp_path)
-        assert cfg.redirect_uri == "http://localhost:8765/auth/callback"
+        assert cfg.redirect_uri == "http://localhost:8766/auth/callback"
 
     def test_reads_from_custom_env_filename(self, tmp_path: Path) -> None:
-        # panel/moderation_server.py: свой .env.moderation, отдельный от
-        # .env панели нейроботов — иначе Twitch не знает, на какой из двух
-        # независимых процессов (8765/8766) вернуть пользователя.
+        # env_filename остался параметром ради тестов: .env теперь один на
+        # монорепо, и разносить PANEL_* по файлам больше незачем.
         (tmp_path / ".env").write_text("PANEL_TWITCH_CLIENT_ID=wrong\n", encoding="utf-8")
         (tmp_path / ".env.moderation").write_text(
             "PANEL_TWITCH_CLIENT_ID=mod_cid\n"
@@ -124,7 +127,7 @@ def auth_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[FastAPI, 
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
     app.state.panel_auth_config = auth.load_panel_auth_config(tmp_path)
-    app.state.panel_root = tmp_path
+    app.state.panel_roots = PanelRoots.all_at(tmp_path)
     app.state.moderation_store_factory = lambda: ModerationStore(str(db))
     app.include_router(auth.router)
     return app, db
@@ -446,7 +449,7 @@ class TestBotTokenCallback:
         assert body["is_moderator"] is True
         assert body["warning"] is None
 
-        env_text = (app.state.panel_root / ".env").read_text(encoding="utf-8")
+        env_text = (app.state.panel_roots.repo / ".env").read_text(encoding="utf-8")
         assert "TWITCH_MOD_ACCESS_TOKEN=bot-access" in env_text
         assert "TWITCH_MOD_REFRESH_TOKEN=bot-refresh" in env_text
         assert "TWITCH_MOD_BOT_LOGIN=mybot" in env_text
@@ -544,8 +547,8 @@ class TestBotTokenStatus:
 
     def test_configured_after_env_written(self, auth_app: tuple[FastAPI, Path]) -> None:
         app, _db = auth_app
-        (app.state.panel_root / ".env").write_text(
-            (app.state.panel_root / ".env").read_text(encoding="utf-8")
+        (app.state.panel_roots.repo / ".env").write_text(
+            (app.state.panel_roots.repo / ".env").read_text(encoding="utf-8")
             + "TWITCH_MOD_ACCESS_TOKEN=x\nTWITCH_MOD_REFRESH_TOKEN=y\nTWITCH_MOD_BOT_LOGIN=mybot\n",
             encoding="utf-8",
         )

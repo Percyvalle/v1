@@ -1,14 +1,21 @@
-"""Локальная веб-панель управления несколькими ботами.
+"""Экран управления нейроботами — роутер объединённой панели.
 
-Каждый бот — это отдельный "профиль": свой .env.<profile> файл (или .env для
-профиля "main"), свои процессы main.py/voice_main.py, своя БД, своя очередь
-голоса, свой usage.json. Один физический бот-код (main.py, bot/*) переиспользуется
-для всех профилей — их разводит переменная окружения BOT_ENV_FILE и INSTANCE
-внутри .env (см. bot/config.py), в точности как раньше при ручном запуске
-двух ботов на разные каналы.
+Каждый бот — это отдельный "профиль": свой .env.<profile> файл (или корневой
+.env для профиля "main"), свои процессы main.py/voice_main.py, своя БД, своя
+очередь голоса, свой usage.json. Один физический бот-код (main.py, bot/*)
+переиспользуется для всех профилей — их разводит переменная окружения
+BOT_ENV_FILE и INSTANCE внутри .env (см. bot/config.py), в точности как
+раньше при ручном запуске двух ботов на разные каналы.
 
-Запуск: .venv\\Scripts\\python -m panel.server
-Откроется на http://127.0.0.1:8765
+Профильная модель здесь сохранена намеренно. Cigilbot отказался от неё в
+Phase 1 в пользу Channel Registry, twitch-bots — нет, и слияние панелей эту
+разницу не трогало: задача была свести вход и порт в один, а не переделать
+то, как заводятся боты (см. CLAUDE.md, "Две сосуществующие модели каналов").
+
+Раньше файл назывался panel/server.py и был самостоятельным приложением на
+порту 8765 со своим SessionMiddleware, своим Twitch-приложением и своим
+входом. Теперь это роутер внутри panel/server.py на 8766: приложение,
+сессия и вход — общие, здесь остались только роуты и логика профилей.
 """
 
 import asyncio
@@ -17,51 +24,45 @@ import json
 import logging
 import os
 import re
-import secrets
 import sqlite3
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 import httpx
 import streamlink
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from starlette.middleware.sessions import SessionMiddleware
-
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))  # чтобы импортировать bot.brain для превью промта
-
-log = logging.getLogger("panel")
 
 # Импортируется здесь, а не в самом низу файла (как раньше), чтобы роуты
 # ниже могли требовать сессию/роль через Depends() уже на момент объявления —
 # SEC-001: раньше все эндпоинты этого файла (в отличие от panel/moderation_api.py)
 # не имели вообще никакой проверки авторизации, потому что require_authenticated
 # существовал только "после" них по тексту файла и никогда не подключался.
-# panel.auth не импортирует panel.server (проверено), цикла нет.
-from bot.registry import ChannelRegistry  # noqa: E402
-from bot.twitch_helix import HelixResolveError, HelixResolver  # noqa: E402
-from panel.auth import load_panel_auth_config, require_role_min  # noqa: E402
-from panel.auth import router as auth_router  # noqa: E402
+# panel.auth не импортирует этот модуль (проверено), цикла нет.
+from bot.registry import ChannelRegistry
+from bot.twitch_helix import HelixResolveError, HelixResolver
+from cigilbot.registry_store import RegistryStore
+from panel.auth import require_role_min
+from panel.paths import BOT_ROOT, CIGILBOT_ROOT, ENV_FILE, MAIN_PROFILE, VENV_PYTHON
 
-VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+log = logging.getLogger("panel.bots")
+
+# Корень apps/twitch-bots. Раньше был `ROOT = Path(__file__).parent.parent` и
+# означал заодно и корень проекта, и место .env, и место БД — после переезда
+# панели в apps/panel/ это совпадение развалилось, см. panel/paths.py.
+ROOT = BOT_ROOT
+
 PROMPTS_DIR = ROOT / "prompts"
-CHANNEL_HISTORY_FILE = ROOT / "panel" / "channel_history.json"
+CHANNEL_HISTORY_FILE = ROOT / "panel_state" / "channel_history.json"
 MAX_CHANNEL_HISTORY = 8
-PROMPT_HISTORY_DIR = ROOT / "panel" / "prompt_history"
+PROMPT_HISTORY_DIR = ROOT / "panel_state" / "prompt_history"
 MAX_PROMPT_HISTORY = 15
 
 # DeepSeek-chat, USD за 1M токенов — грубая оценка без учёта кэш-скидки
 PRICE_PER_1M_INPUT_USD = 0.27
 PRICE_PER_1M_OUTPUT_USD = 1.10
-
-# Профиль "main" живёт в .env (как и до многоботовости), остальные — в
-# .env.<profile>. Список профилей — это просто все .env* файлы в корне.
-MAIN_PROFILE = "main"
 
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 # Баланс не меняется на лету — кэшируем ответ, чтобы polling с фронта раз в
@@ -164,8 +165,7 @@ class PromptPreviewRequest(BaseModel):
     username: str = "тестовый_зритель"
 
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +173,18 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 # ---------------------------------------------------------------------------
 
 def _env_file_for(profile: str) -> Path:
+    """Профиль "main" читается из КОРНЕВОГО .env монорепо, не из
+    apps/twitch-bots/.env — после слияния панелей общий конфиг живёт в
+    одном файле на весь репозиторий (см. panel/paths.py). Остальные
+    профили остались рядом с main.py, как и были."""
     if profile == MAIN_PROFILE:
-        return ROOT / ".env"
+        return ENV_FILE
     return ROOT / f".env.{profile}"
 
 
 def list_profiles() -> list[str]:
     profiles = []
-    if (ROOT / ".env").exists():
+    if ENV_FILE.exists():
         profiles.append(MAIN_PROFILE)
     for p in sorted(ROOT.glob(".env.*")):
         if p.name == ".env.example":
@@ -382,34 +386,18 @@ def db_path(profile: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Авторизация панели (SEC-001). Подключается здесь — до объявления первого
-# HTTP-роута ниже — именно потому, что каждый роут в этом файле теперь
-# требует Depends(require_role_min(...)); зависимость должна существовать
-# до того, как декоратор @app.get/@app.post на неё ссылается. Middleware
-# сама по себе (в отличие от роутов) может быть добавлена в любой момент до
-# первого реального запроса, но держим её рядом с остальной auth-настройкой
-# для читаемости, а не потому что это технически обязательно.
+# Авторизация панели (SEC-001). Раньше здесь стоял целый блок настройки —
+# чтение PANEL_SESSION_SECRET, SessionMiddleware, app.state, подключение
+# auth_router — и стоял он именно тут, выше первого роута, чтобы
+# require_role_min существовал к моменту вычисления декораторов. Всё это
+# переехало в panel/server.py, который собирает единственное приложение;
+# здесь остался только импорт зависимости (см. импорты в шапке файла).
+#
+# app.state.panel_db_factory отсюда исчез вместе с ним: ADMIN-оверрайды
+# ролей больше не живут в panel_admins внутри bot.db, оба экрана теперь
+# читают один список из mod_panel_users (см. panel/auth.py и разовый
+# scripts/merge_panel_admins.py, переносящий старые записи).
 # ---------------------------------------------------------------------------
-
-from bot.database import Database  # noqa: E402
-
-_panel_auth_config = load_panel_auth_config(ROOT)
-_session_secret = os.environ.get("PANEL_SESSION_SECRET", "") or read_env(MAIN_PROFILE).get(
-    "PANEL_SESSION_SECRET", ""
-)
-if not _session_secret:
-    # Без настроенного секрета вход всё равно недоступен (auth_login отдаст
-    # 503, см. PanelAuthConfig.configured) — временный секрет только чтобы
-    # SessionMiddleware не падал при импорте на машинах, где вход ещё не
-    # настраивали. Роли и действия при этом остаются защищены require_role*
-    # зависимостями, а не этим секретом.
-    _session_secret = secrets.token_hex(32)
-
-app.state.panel_auth_config = _panel_auth_config
-app.state.panel_root = ROOT
-app.state.panel_db_factory = lambda: Database(str(db_path(MAIN_PROFILE)))
-app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax")
-app.include_router(auth_router)
 
 
 def usage_path(profile: str) -> Path:
@@ -530,8 +518,14 @@ def stop_profile(profile: str) -> None:
 # HTTP-эндпоинты
 # ---------------------------------------------------------------------------
 
-@app.get("/")
+@router.get("/bots")
 def index():
+    # Путь сменился с "/" на "/bots": в объединённой панели корень занят
+    # экраном модерации (panel/server.py), а два экрана не могут делить
+    # один URL. Ссылка между экранами теперь внутренняя, а не на другой
+    # порт — раньше в index.html стояла ссылка на localhost:8766, и она
+    # вела в процесс с ОТДЕЛЬНОЙ сессией, где надо было логиниться заново.
+    #
     # FileResponse по умолчанию не запрещает кэш — index.html (в отличие
     # от статики с ?v=hash в самом файле) браузер иначе кэширует надолго и
     # правки (например, ссылка на панель модерации, испр. 09.08) не
@@ -543,7 +537,7 @@ def index():
     return response
 
 
-@app.get("/api/profiles")
+@router.get("/api/profiles")
 def api_profiles(session: tuple[str, str] = require_role_min("VIEWER")):
     # Модерационные профили (is_moderation_only) не показываются в списке
     # "Боты" — они управляются через раздел "Модерация" (панель на 8766),
@@ -553,7 +547,7 @@ def api_profiles(session: tuple[str, str] = require_role_min("VIEWER")):
     return JSONResponse([s for s in statuses if not s["is_moderation_only"]])
 
 
-@app.get("/api/deepseek_balance")
+@router.get("/api/deepseek_balance")
 async def api_deepseek_balance(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
@@ -562,7 +556,7 @@ async def api_deepseek_balance(
     return JSONResponse(balance)
 
 
-@app.get("/api/channel_status")
+@router.get("/api/channel_status")
 async def api_channel_status(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
@@ -571,7 +565,7 @@ async def api_channel_status(
     return JSONResponse(status)
 
 
-@app.post("/api/prompt/preview")
+@router.post("/api/prompt/preview")
 async def api_prompt_preview(
     payload: PromptPreviewRequest, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -599,7 +593,7 @@ async def api_prompt_preview(
     return JSONResponse({"reply": reply})
 
 
-@app.post("/api/profiles/new")
+@router.post("/api/profiles/new")
 async def api_new_profile(
     payload: dict, session: tuple[str, str] = require_role_min("OWNER")
 ):
@@ -623,10 +617,21 @@ async def api_new_profile(
     return JSONResponse({"created": profile})
 
 
-CIGILBOT_REGISTRY_SYNC_URL = "http://127.0.0.1:8766/api/registry/channels"
+# Зеркало Channel Registry на стороне Cigilbot. Раньше сюда шёл HTTP-запрос
+# на http://127.0.0.1:8766/api/registry/channels с общим секретом
+# INTERNAL_SYNC_TOKEN — единственный HTTP-путь между двумя процессами
+# панелей. Процесс теперь один, и запрос был бы обращением приложения к
+# самому себе: лишний сетевой хоп, который вдобавок молча пропускался,
+# если INTERNAL_SYNC_TOKEN не задан (а в .env.example его и не было).
+#
+# Сам эндпоинт /api/registry/channels оставлен на месте (см.
+# panel/registry_api.py) — он по-прежнему защищён токеном и остаётся
+# рабочим входом для внешнего вызова, просто панель больше им не
+# пользуется для себя.
+CIGILBOT_REGISTRY_DB = CIGILBOT_ROOT / "registry.db"
 
 
-@app.post("/api/channels")
+@router.post("/api/channels")
 async def api_add_channel(payload: dict, session: tuple[str, str] = require_role_min("OWNER")):
     """Добавляет канал в Channel Registry (registry.db) — один Twitch-бот-
     аккаунт обслуживает все каналы (см. docs/master-plan.html,
@@ -673,29 +678,30 @@ async def api_add_channel(payload: dict, session: tuple[str, str] = require_role
     finally:
         await registry.close()
 
+    # Зеркалирование в registry.db Cigilbot — теперь прямой записью в тот же
+    # файл, куда писал бы обработчик /api/registry/channels. Две БД остались
+    # (у каждого движка свой Registry, см. CLAUDE.md), объединён только
+    # процесс панели — а значит исчез и класс отказа "сосед недоступен":
+    # писать некому, кроме самого себя.
     cigilbot_synced = False
-    # Тот же приоритет источника, что Cigilbot/panel/registry_api.py::
-    # _internal_sync_token — переменная окружения процесса переопределяет
-    # .env файл. Раньше здесь читался только файл: если токен на стороне
-    # Cigilbot задан через окружение процесса (а не .env), twitch-bots
-    # отправлял бы пустой/устаревший токен и синхронизация молча падала
-    # бы с 401 на каждый новый канал.
-    sync_token = os.environ.get("INTERNAL_SYNC_TOKEN", "") or read_env(MAIN_PROFILE).get("INTERNAL_SYNC_TOKEN", "")
-    if sync_token:
+    try:
+        mirror = RegistryStore(str(CIGILBOT_REGISTRY_DB))
+        await mirror.connect()
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.post(
-                    CIGILBOT_REGISTRY_SYNC_URL,
-                    json={
-                        "broadcaster_id": record.broadcaster_id,
-                        "login": record.login,
-                        "display_name": user.display_name,
-                    },
-                    headers={"X-Internal-Token": sync_token},
-                )
-                cigilbot_synced = resp.status_code in (200, 201)
-        except httpx.HTTPError as exc:
-            log.warning("Не удалось зарегистрировать канал %r в Cigilbot: %s", login, exc)
+            await mirror.upsert_channel(
+                broadcaster_id=record.broadcaster_id,
+                login=record.login,
+                display_name=user.display_name,
+                registered_by="sync",
+            )
+            cigilbot_synced = True
+        finally:
+            await mirror.close()
+    except Exception:
+        # Канал уже создан в собственном registry.db выше — сбой зеркала не
+        # должен отменять основную операцию, ровно как и раньше при
+        # недоступности соседнего процесса (cigilbot_synced=false в ответе).
+        log.exception("Не удалось зеркалировать канал %r в registry.db Cigilbot", login)
 
     return JSONResponse(
         {
@@ -706,13 +712,13 @@ async def api_add_channel(payload: dict, session: tuple[str, str] = require_role
     )
 
 
-@app.post("/api/start")
+@router.post("/api/start")
 def api_start(profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("ADMIN")):
     started = start_profile(profile)
     return JSONResponse({"started": started, "status": get_profile_status(profile)})
 
 
-@app.post("/api/stop")
+@router.post("/api/stop")
 def api_stop(profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("ADMIN")):
     stop_profile(profile)
     return JSONResponse({"status": get_profile_status(profile)})
@@ -765,19 +771,19 @@ def _push_prompt_history(profile: str, personality: str) -> None:
     )
 
 
-@app.get("/api/prompt/history")
+@router.get("/api/prompt/history")
 def api_prompt_history(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
     return JSONResponse(_load_prompt_history(profile))
 
 
-@app.get("/api/channel_history")
+@router.get("/api/channel_history")
 def api_channel_history(session: tuple[str, str] = require_role_min("VIEWER")):
     return JSONResponse(_load_channel_history())
 
 
-@app.post("/api/switch_channel")
+@router.post("/api/switch_channel")
 def api_switch_channel(
     profile: str, channel: str, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -797,7 +803,7 @@ def api_switch_channel(
     return JSONResponse({"status": get_profile_status(profile)})
 
 
-@app.get("/api/prompts")
+@router.get("/api/prompts")
 def api_list_prompts(session: tuple[str, str] = require_role_min("VIEWER")):
     if not PROMPTS_DIR.exists():
         return JSONResponse([])
@@ -805,14 +811,14 @@ def api_list_prompts(session: tuple[str, str] = require_role_min("VIEWER")):
     return JSONResponse(names)
 
 
-@app.get("/api/prompt/current")
+@router.get("/api/prompt/current")
 def api_get_current_prompt(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
     return JSONResponse({"personality": read_env(profile).get("BOT_PERSONALITY", "")})
 
 
-@app.get("/api/prompt/{name}")
+@router.get("/api/prompt/{name}")
 def api_get_prompt(name: str, session: tuple[str, str] = require_role_min("VIEWER")):
     path = PROMPTS_DIR / f"{name}.txt"
     if not path.exists():
@@ -820,7 +826,7 @@ def api_get_prompt(name: str, session: tuple[str, str] = require_role_min("VIEWE
     return JSONResponse({"personality": path.read_text(encoding="utf-8").strip()})
 
 
-@app.post("/api/prompt/save")
+@router.post("/api/prompt/save")
 async def api_save_prompt(
     payload: SavePromptRequest, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -834,7 +840,7 @@ async def api_save_prompt(
     return JSONResponse({"saved": name})
 
 
-@app.post("/api/prompt/apply")
+@router.post("/api/prompt/apply")
 async def api_apply_prompt(
     payload: ApplyPromptRequest, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -870,7 +876,7 @@ async def api_apply_prompt(
 # они были запущены (пороги читаются один раз при старте voice_main.py).
 # ---------------------------------------------------------------------------
 
-@app.post("/api/voice_settings")
+@router.post("/api/voice_settings")
 def api_voice_settings(
     payload: VoiceSettingsRequest, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -895,7 +901,7 @@ def api_voice_settings(
 # и должно меняться при каждом переключении канала.
 # ---------------------------------------------------------------------------
 
-@app.post("/api/streamer_context")
+@router.post("/api/streamer_context")
 def api_streamer_context(
     payload: StreamerContextRequest, session: tuple[str, str] = require_role_min("ADMIN")
 ):
@@ -917,7 +923,7 @@ def api_streamer_context(
 # запущенный бот прямо сейчас, с учётом INSTANCE).
 # ---------------------------------------------------------------------------
 
-@app.get("/api/viewers")
+@router.get("/api/viewers")
 def api_viewers(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
@@ -946,7 +952,7 @@ def _all_bot_nicks() -> set[str]:
     }
 
 
-@app.get("/api/chat_feed")
+@router.get("/api/chat_feed")
 def api_chat_feed(
     profile: str = MAIN_PROFILE, session: tuple[str, str] = require_role_min("VIEWER")
 ):
@@ -981,7 +987,7 @@ def api_chat_feed(
     return JSONResponse(feed)
 
 
-@app.post("/api/viewers/note")
+@router.post("/api/viewers/note")
 def api_set_viewer_note(
     payload: SetNoteRequest, session: tuple[str, str] = require_role_min("MODERATOR")
 ):
@@ -1006,7 +1012,7 @@ def api_set_viewer_note(
 # ---------------------------------------------------------------------------
 
 
-@app.websocket("/ws/logs")
+@router.websocket("/ws/logs")
 async def ws_logs(websocket: WebSocket):
     from panel.auth import SESSION_KEY
 
@@ -1037,9 +1043,3 @@ async def ws_logs(websocket: WebSocket):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=8765)

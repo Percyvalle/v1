@@ -404,7 +404,11 @@ tr:last-child td { border-bottom: none; }
       </div>
     </div>
 
-    <a class="sec-item" href="http://localhost:8766/moderation" style="text-decoration:none;">
+    <!-- Внутренняя ссылка, а не http://localhost:8766/moderation: экраны
+         живут в одном приложении, и переход больше не требует повторного
+         входа. Абсолютный URL вёл в другой origin (порт — его часть), где
+         cookie-сессия этой вкладки не действовала. -->
+    <a class="sec-item" href="/moderation" style="text-decoration:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6z"/></svg>
       Модерация
     </a>
@@ -418,7 +422,7 @@ tr:last-child td { border-bottom: none; }
       <button class="ghost sm" id="btn-logout">Выйти</button>
     </div>
 
-    <div class="sidebar-footer">127.0.0.1:8765</div>
+    <div class="sidebar-footer">127.0.0.1:8766</div>
   </div>
 
   <!-- ============================================================ CONTENT -->
@@ -751,7 +755,9 @@ async function checkAuth() {
 }
 
 $('btn-login').addEventListener('click', () => {
-  window.location.href = '/auth/login';
+  // ?next=/bots — вернуться на этот же экран, а не на модерацию (см.
+  // panel/auth.py::_safe_next). Экранов в панели два, вход один.
+  window.location.href = '/auth/login?next=/bots';
 });
 $('btn-logout').addEventListener('click', async () => {
   await fetch('/auth/logout');

@@ -26,20 +26,26 @@ mod_panel_users) — не из заголовка, который клиент �
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-ROOT = Path(__file__).parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from cigilbot.executor import parse_payload
+from cigilbot.registry_store import RegistryStore
+from cigilbot.store import ModerationStore, PatternInput
+from panel.auth import require_authenticated, role_for_profile
+from panel.paths import CIGILBOT_ROOT
 
-from cigilbot.executor import parse_payload  # noqa: E402
-from cigilbot.registry_store import RegistryStore  # noqa: E402
-from cigilbot.store import ModerationStore, PatternInput  # noqa: E402
-from panel.auth import require_authenticated, role_for_profile  # noqa: E402
+# Где лежат mod.<broadcaster_id>.db и registry.db. Раньше это был
+# `Path(__file__).parent.parent` — панель жила внутри Cigilbot, и корень
+# пакета совпадал с корнем проекта. После переезда в apps/panel совпадения
+# нет, путь стал явным (см. panel/paths.py). Имя ROOT сохранено: на него
+# монкейпатчатся тесты (tests/panel/conftest.py::tmp_root).
+#
+# Блок sys.path, стоявший здесь же, переехал в panel/__init__.py — иначе
+# каждый модуль пакета чинил бы пути заново.
+ROOT = CIGILBOT_ROOT
 
 router = APIRouter(prefix="/api/moderation")
 
