@@ -80,8 +80,8 @@ module = ["bot.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 
-# panel/bots_api.py — тот же непроаннотированный код (бывший
-# twitch-bots/panel/server.py), только переехавший внутрь этого пакета.
+# panel/bots_api.py — тот же непроаннотированный код (бывшая панель
+# нейроботов), только переехавший внутрь этого пакета.
 # В files его нет, но server.py импортирует из него router, и без skip
 # mypy разбирал бы его по этой ссылке.
 [[tool.mypy.overrides]]

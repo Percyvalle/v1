@@ -1,6 +1,6 @@
 """Управление consumer-процессами (subprocess.Popen + pid-файл + tasklist).
 
-Тот же проверенный приём, что twitch-bots/panel/server.py использует для
+Тот же проверенный приём, что apps/panel/panel/bots_api.py использует для
 управления main.py (см. _pid_file/_read_pid/_process_alive/_stop_pid/_start
 там) — Windows не даёт надёжного async-API для проверки живости чужого
 процесса, поэтому используется tasklist/taskkill через subprocess, как уже
@@ -25,13 +25,14 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+from cigilbot import paths
+
 ROOT = Path(__file__).parent.parent
 
 # Общий venv в корне монорепо, а не .venv внутри проекта: venv стало одно на
 # оба проекта и панель, потому что панель импортирует и bot.*, и cigilbot.*
 # и не собирается в один процесс из двух раздельных окружений.
-# apps/cigilbot -> apps -> корень репозитория.
-VENV_PYTHON = ROOT.parent.parent / ".venv" / "Scripts" / "python.exe"
+VENV_PYTHON = paths.REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 
 # broadcaster_id всегда приходит из Twitch Helix (числовой ID) — но
 # start_consumer()/pid_file() также достижимы из HTTP-пути
@@ -50,11 +51,11 @@ def _validate_broadcaster_id(broadcaster_id: str) -> None:
 
 def pid_file(broadcaster_id: str) -> Path:
     _validate_broadcaster_id(broadcaster_id)
-    return ROOT / f"consumer.{broadcaster_id}.pid"
+    return paths.RUN / f"consumer.{broadcaster_id}.pid"
 
 
 def _lock_file(broadcaster_id: str) -> Path:
-    return ROOT / f"consumer.{broadcaster_id}.lock"
+    return paths.RUN / f"consumer.{broadcaster_id}.lock"
 
 
 # Атомарная секция "проверить pid жив -> записать новый pid" per-channel —
@@ -131,18 +132,20 @@ def stop_consumer(broadcaster_id: str) -> None:
 def start_consumer(broadcaster_id: str) -> int:
     """Запускает `python -m cigilbot.consumer <broadcaster_id>` как
     управляемый subprocess, пишет pid в pid-файл. Логи — в
-    logs/consumer.<broadcaster_id>.out.log / .err.log (создаётся при
-    необходимости, тот же принцип, что twitch-bots/panel/server.py._start).
-    Обёрнуто в _pid_lock() — см. docstring там же."""
+    var/cigilbot/logs/consumer.<broadcaster_id>.out.log / .err.log
+    (создаётся при необходимости, тот же принцип, что
+    panel/bots_api.py::_start). Обёрнуто в _pid_lock() — см. docstring там же."""
+    # До _pid_lock, а не внутри: сам lock-файл живёт в var/cigilbot/run, и
+    # без каталога os.open(O_CREAT) упадёт раньше, чем что-либо запустится.
+    paths.ensure_dirs()
+
     with _pid_lock(broadcaster_id):
         existing = read_pid(pid_file(broadcaster_id))
         if existing is not None and process_alive(existing):
             return existing
 
-        logs_dir = ROOT / "logs"
-        logs_dir.mkdir(exist_ok=True)
-        log_out = logs_dir / f"consumer.{broadcaster_id}.out.log"
-        log_err = logs_dir / f"consumer.{broadcaster_id}.err.log"
+        log_out = paths.LOGS / f"consumer.{broadcaster_id}.out.log"
+        log_err = paths.LOGS / f"consumer.{broadcaster_id}.err.log"
 
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"

@@ -1,11 +1,12 @@
-"""REST + WebSocket роутер панели модерации (этап 8).
+"""REST + WebSocket роутер экрана модерации (этап 8).
 
-Подключается к существующему `app` в panel/moderation_server.py — процесс
-Cigilbot, полностью отдельный от twitch-bots/panel/server.py (разные репо,
-разные порты, разные БД).
+Подключается к приложению в panel/server.py — тому же, куда подключён
+роутер экрана нейроботов (panel/bots_api.py). Раньше это были два
+самостоятельных приложения на разных портах с раздельным входом; см.
+докстринг panel/server.py про то, почему их свели обратно.
 
 Панель — процесс, отдельный от бота, и Twitch-подключения не имеет. Кнопка
-BAN ALL кладёт задание в mod_action_queue (в mod.<profile>.db, собственной
+BAN ALL кладёт задание в mod_action_queue (в mod.<broadcaster_id>.db, собственной
 БД Cigilbot) — исполняет его cigilbot/executor.py внутри процесса-консьюмера
 Cigilbot (см. cigilbot/consumer.py), который поллит очередь так же, как
 раньше это делал main.py._poll_action_queue (см. docs/moderation-plan.md,
@@ -35,17 +36,21 @@ from cigilbot.executor import parse_payload
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore, PatternInput
 from panel.auth import require_authenticated, role_for_profile
-from panel.paths import CIGILBOT_ROOT
+from panel.paths import CIGILBOT_ROOT, CIGILBOT_VAR
 
 # Где лежат mod.<broadcaster_id>.db и registry.db. Раньше это был
-# `Path(__file__).parent.parent` — панель жила внутри Cigilbot, и корень
-# пакета совпадал с корнем проекта. После переезда в apps/panel совпадения
-# нет, путь стал явным (см. panel/paths.py). Имя ROOT сохранено: на него
-# монкейпатчатся тесты (tests/panel/conftest.py::tmp_root).
+# `Path(__file__).parent.parent` — панель жила внутри Cigilbot, корень
+# пакета совпадал с корнем проекта, а состояние лежало там же, что и код.
+# Теперь это разные каталоги (см. panel/paths.py). Имя ROOT сохранено: на
+# него монкейпатчатся тесты (tests/panel/conftest.py::tmp_root).
 #
 # Блок sys.path, стоявший здесь же, переехал в panel/__init__.py — иначе
 # каждый модуль пакета чинил бы пути заново.
-ROOT = CIGILBOT_ROOT
+ROOT = CIGILBOT_VAR
+
+# Исходники Cigilbot — только ради config/moderation.yml, который экран
+# Settings читает и пишет. Это конфиг, а не состояние: он под git.
+SRC_ROOT = CIGILBOT_ROOT
 
 router = APIRouter(prefix="/api/moderation")
 
@@ -753,10 +758,14 @@ from cigilbot.config import ConfigError, load_config  # noqa: E402
 
 
 def _config_path() -> Path:
+    # SRC_ROOT, а не ROOT: moderation.yml — конфиг под git, он лежит с
+    # исходниками, тогда как ROOT указывает на var/ с рабочим состоянием.
+    # Пока панель жила внутри Cigilbot, это был один и тот же каталог.
+    #
     # Вычисляется на каждый вызов (не константа при импорте модуля) — тесты
-    # подменяют ROOT через monkeypatch.setattr(moderation_api, "ROOT", ...),
-    # как и остальной модуль (см. _db_path/_env_file_for выше).
-    return ROOT / "config" / "moderation.yml"
+    # подменяют SRC_ROOT через monkeypatch.setattr(moderation_api, ...),
+    # как и остальной модуль (см. _db_path выше).
+    return SRC_ROOT / "config" / "moderation.yml"
 
 
 class ConfigSaveRequest(BaseModel):

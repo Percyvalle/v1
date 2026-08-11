@@ -118,16 +118,43 @@ still token-guarded, as an entry point for an external caller — nothing intern
 
 | File | Owner | Contents |
 |---|---|---|
-| `twitch-bots/bot.db` | twitch-bots | viewers, chat history, `mod_inbox` |
-| `twitch-bots/registry.db` | twitch-bots | Channel Registry — **source of truth** for which channels exist |
-| `cigilbot/registry.db` | cigilbot | independent mirror of the above |
-| `cigilbot/mod.db` | cigilbot | only `mod_panel_users` — ADMIN role overrides for **both** panel screens |
-| `cigilbot/mod.<broadcaster_id>.db` | cigilbot | all moderation state — **one file per channel**, because the engine is stateful |
+| `var/twitch-bots/bot.db` | twitch-bots | viewers, chat history, `mod_inbox` |
+| `var/twitch-bots/registry.db` | twitch-bots | Channel Registry — **source of truth** for which channels exist |
+| `var/cigilbot/registry.db` | cigilbot | independent mirror of the above |
+| `var/cigilbot/mod.db` | cigilbot | only `mod_panel_users` — ADMIN role overrides for **both** panel screens |
+| `var/cigilbot/mod.<broadcaster_id>.db` | cigilbot | all moderation state — **one file per channel**, because the engine is stateful |
 
 `panel_admins` in `bot.db` is gone: with one panel there is one list of ADMINs, and it lives
 in `mod_panel_users`. `bot/database.py` no longer creates the table, but does not drop it
 either — `apps/panel/scripts/merge_panel_admins.py` is the one-off that moves existing rows
 across (higher role wins on conflict, never downgrades).
+
+### `var/` — all runtime state, outside the source trees
+
+```
+var/twitch-bots/   bot.db, registry.db, usage.json, voice_input.txt, logs/, run/, panel_state/
+var/cigilbot/      registry.db, mod.db, mod.<broadcaster_id>.db, logs/, run/
+```
+
+The whole directory is one line in `.gitignore`, replacing a list of masks (`*.db`, `*.pid`,
+`logs/`, `usage*.json`, …) that had to grow with every new kind of working file, where a miss
+meant a live database or a secret in a commit.
+
+Three modules define these paths and **must agree**: `bot/paths.py`, `cigilbot/paths.py` and
+`panel/paths.py`. The panel duplicates the definitions rather than importing them, because
+its own `sys.path` bootstrap (`panel/__init__.py`) imports `panel.paths` and cannot depend on
+the engines being importable yet. `test_merged_panel.py::test_panel_and_engines_agree_on_state_dirs`
+asserts the duplicate has not drifted — if it does, the panel writes one file while the engine
+reads another.
+
+Paths are absolute. `bot/config.py` used to return `"bot.db"` relative to the current
+directory, which worked only because the panel always launched `main.py` with
+`cwd=apps/twitch-bots`; from anywhere else the same code silently created a fresh empty
+database instead of opening the existing one.
+
+`ensure_dirs()` is called before anything opens a file under `var/` — on a fresh clone the
+directory does not exist at all. Note it must run **before** taking a pid-lock, not inside it:
+the lock file itself lives in `var/*/run/`.
 
 `bot.db` may carry an `INSTANCE` suffix (`bot.<instance>.db`) under the legacy profile model
 — see below. `bot/database.py` runs `executescript` on every connect with no versioning;
@@ -270,21 +297,19 @@ Phase 1 is closed and verified on live channels; Phase 2 (Alerts) is next.
 Findings from a full read of the tree — worth fixing, and worth knowing about before trusting
 a comment or a template:
 
-1. Stale pre-monorepo paths survive in comments and docstrings: `../TWITCH BOTS`,
-   `../Cigilbot` (wrong case — breaks on case-sensitive filesystems),
-   `Cigilbot/cigilbot/...`, `bot/moderation/detectors/language.py`, `mod.<profile>.db`,
-   and a claim that the two projects live in "разные репо". References to
-   `panel/moderation_server.py` and `panel/server.py` are stale the same way — both files
-   moved into `apps/panel` and were renamed.
-2. Runtime state sits inside the source trees: `registry.db`, `mod.*.db`, `bot.db`, `*.pid`,
-   `*.lock`, `logs/`, `usage.json`. All gitignored, but it means a project directory mixes
-   code with live data, and it is the reason `.env` paths silently agreed for so long.
-3. `apps/cigilbot/.venv/` may still exist from before the shared venv. Nothing uses it.
-4. `scripts/import_registry.py` exists in both engines as separate copies.
-5. `twitch-bots/registry.db` and `cigilbot/registry.db` are two mirrors of one list, now
+1. `twitch-bots/registry.db` and `cigilbot/registry.db` are two mirrors of one list, now
    written by the same process one after the other — the HTTP hop that justified the split
-   is gone.
+   is gone. Collapsing them into one is a data-model change (it touches
+   `main.py::_load_initial_channels`, `consumer.py`, the supervisor and both registry
+   routers), not a layout one, which is why it was left alone.
+2. `apps/twitch-bots/scripts/import_registry.py` is a one-off from the Registry migration.
+   It still works; the Cigilbot copy of it was deleted because that project dropped
+   `.env.<profile>` in Phase 1, so it could only ever print "импортировать нечего".
+3. The engines' own `docs/*.html` still describe the two-panel split as current.
 
-Earlier entries about missing `streamlink`/`av` and undocumented `.env` keys are fixed: the
-root `requirements.txt`/`requirements-voice.txt` pin them, and the root `.env.example`
-documents every key both engines read, `INTERNAL_SYNC_TOKEN` included.
+Earlier entries here are fixed and gone: missing `streamlink`/`av` (now pinned in the root
+`requirements.txt`/`requirements-voice.txt`), undocumented `.env` keys (the root
+`.env.example` documents every key both engines read, `INTERNAL_SYNC_TOKEN` included),
+stale pre-monorepo paths in comments (`bot/moderation/...`, `mod.<profile>.db`,
+`../TWITCH BOTS`), the dead `apps/cigilbot/.venv`, and runtime state living inside the
+source trees — all state now lives in `var/`, see below.

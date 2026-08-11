@@ -3,10 +3,19 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# BOT_ENV_FILE позволяет держать несколько ботов на разные каналы в одной
-# папке: у каждого свой .env, а вместе с ним своя БД, очередь и логи (см.
-# INSTANCE ниже). Без этой переменной всё работает как раньше, из .env.
-ENV_FILE = os.environ.get("BOT_ENV_FILE", ".env")
+from bot import paths
+
+# BOT_ENV_FILE позволяет держать несколько ботов на разные каналы: у каждого
+# свой .env.<profile>, а вместе с ним своя БД, очередь и логи (см. INSTANCE
+# ниже). Панель именно так и разводит профили, запуская main.py с этой
+# переменной.
+#
+# Без неё читается общий .env В КОРНЕ МОНОРЕПО, а не рядом с main.py: после
+# слияния панелей общий конфиг живёт в одном файле на весь репозиторий.
+# Раньше здесь было относительное ".env", то есть файл искался относительно
+# текущей папки процесса — работало только потому, что бота всегда запускали
+# из apps/twitch-bots.
+ENV_FILE = os.environ.get("BOT_ENV_FILE") or str(paths.REPO_ROOT / ".env")
 load_dotenv(ENV_FILE)
 
 
@@ -34,20 +43,24 @@ class Config:
 
     @property
     def db_path(self) -> str:
-        return self._path("bot", "db")
+        return str(paths.VAR / self._name("bot", "db"))
 
     @property
     def usage_path(self) -> str:
-        return self._path("usage", "json")
+        return str(paths.VAR / self._name("usage", "json"))
 
     @property
     def queue_path(self) -> str:
-        return self._path("voice_input", "txt")
+        return str(paths.VAR / self._name("voice_input", "txt"))
 
     def log_path(self, name: str) -> str:
-        return f"logs/{self._path(name, 'log')}"
+        return str(paths.LOGS / self._name(name, "log"))
 
-    def _path(self, name: str, ext: str) -> str:
+    def _name(self, name: str, ext: str) -> str:
+        """Имя файла инстанса: INSTANCE разводит несколько ботов по разным
+        файлам в одной папке (bot.<instance>.db). Панель повторяет этот же
+        алгоритм в panel/bots_api.py::_instance_path, чтобы читать файлы
+        того инстанса, который сейчас запущен."""
         return f"{name}.{self.instance}.{ext}" if self.instance else f"{name}.{ext}"
 
 

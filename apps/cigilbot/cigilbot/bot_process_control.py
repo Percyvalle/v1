@@ -1,13 +1,15 @@
 """Управление процессом main.py (чат-бот twitch-bots) напрямую из Cigilbot.
 
-Полностью независимо от twitch-bots/panel/server.py (порт 8765) — та
-панель остаётся отдельным продуктом для LLM-ботов (Chat/Brain/Prompt) и
-больше не должна быть точкой входа для запуска/остановки multi-channel
-бота модерации. Панель модерации (порт 8766, panel/registry_api.py) сама
-запускает main.py как subprocess напрямую, тем же проверенным приёмом
-(subprocess.Popen + pid-файл + tasklist), что уже работает в
-cigilbot/process_control.py (управление consumer-процессами) и в самой
-twitch-bots/panel/server.py.
+Экран Registry в панели (panel/registry_api.py) запускает main.py как
+subprocess сам, тем же проверенным приёмом (subprocess.Popen + pid-файл +
+tasklist), что уже работает в cigilbot/process_control.py для consumer-
+процессов и в panel/bots_api.py для профилей ботов.
+
+Отдельно от panel/bots_api.py, хотя оба умеют запускать main.py, и это
+не дублирование: там процесс запускается ПО ПРОФИЛЮ (свой .env.<profile>,
+свой INSTANCE, своя БД), здесь — ровно один мульти-канальный бот
+модерации с фиксированным .env.cigilbot. Пути пересекаются только в
+приёме управления процессом, но не в том, чем управляют.
 
 main.py при запуске с BOT_ENV_FILE=.env.cigilbot сам читает список
 активных каналов из своего registry.db (см. twitch-bots/main.py::
@@ -25,6 +27,8 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+from cigilbot import paths
+
 CIGILBOT_ROOT = Path(__file__).parent.parent
 
 # BOT_PROJECT_ROOT — та же переменная, что уже использует cigilbot/consumer.py
@@ -35,10 +39,10 @@ BOT_PROJECT_ROOT = Path(
 )
 
 # Общий venv в корне монорепо — не .venv внутри twitch-bots, которого больше
-# нет (см. корневой requirements.txt). Считается от CIGILBOT_ROOT, а не от
+# нет (см. корневой requirements.txt). Берётся из paths, а не от
 # BOT_PROJECT_ROOT: последний настраивается через переменную окружения и
 # может указывать куда угодно, тогда как venv у монорепо ровно один.
-BOT_VENV_PYTHON = CIGILBOT_ROOT.parent.parent / ".venv" / "Scripts" / "python.exe"
+BOT_VENV_PYTHON = paths.REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 
 # Профиль twitch-bots, читающий каналы из Registry (см. .env.cigilbot в
 # apps/twitch-bots — единственный профиль без DEEPSEEK_API_KEY, чисто
@@ -46,10 +50,10 @@ BOT_VENV_PYTHON = CIGILBOT_ROOT.parent.parent / ".venv" / "Scripts" / "python.ex
 # одним конкретным ботом-процессом, а не произвольным профилем.
 BOT_ENV_FILE_NAME = ".env.cigilbot"
 
-PID_FILE = CIGILBOT_ROOT / "chatbot.pid"
-LOCK_FILE = CIGILBOT_ROOT / "chatbot.lock"
-LOG_OUT = CIGILBOT_ROOT / "logs" / "chatbot.out.log"
-LOG_ERR = CIGILBOT_ROOT / "logs" / "chatbot.err.log"
+PID_FILE = paths.RUN / "chatbot.pid"
+LOCK_FILE = paths.RUN / "chatbot.lock"
+LOG_OUT = paths.LOGS / "chatbot.out.log"
+LOG_ERR = paths.LOGS / "chatbot.err.log"
 
 # Между двумя параллельными вызовами start_bot() (например, двойной клик в
 # панели, или ручной start во время автоматического) нужна атомарная секция
@@ -131,6 +135,10 @@ def start_bot() -> int:
     существующий pid (идемпотентно, как cigilbot/process_control.py).
     Обёрнуто в _pid_lock(), чтобы параллельный вызов (двойной клик,
     supervisor + ручной start) не мог породить два живых main.py."""
+    # До _pid_lock: сам lock-файл лежит в var/cigilbot/run, и без каталога
+    # os.open(O_CREAT) упадёт раньше, чем что-либо запустится.
+    paths.ensure_dirs()
+
     with _pid_lock():
         existing = get_pid()
         if existing is not None:
@@ -143,7 +151,6 @@ def start_bot() -> int:
                 f".\\.venv\\Scripts\\pip install -r requirements.txt"
             )
 
-        LOG_OUT.parent.mkdir(exist_ok=True)
         env = os.environ.copy()
         env["BOT_ENV_FILE"] = str(BOT_PROJECT_ROOT / BOT_ENV_FILE_NAME)
 

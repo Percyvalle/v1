@@ -1,6 +1,6 @@
 """Версионированные миграции схемы Channel Registry (registry.db).
 
-Отдельный файл БД от mod.<profile>.db (см. cigilbot/migrations.py) — это
+Отдельный файл БД от mod.<broadcaster_id>.db (см. cigilbot/migrations.py) — это
 control-plane для ВСЕХ каналов сразу ("какие каналы вообще существуют, в
 каком они статусе"), а не per-channel данные модерации одного канала.
 Cigilbot и twitch-bots ведут каждый свой registry.db независимо (два

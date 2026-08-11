@@ -170,7 +170,7 @@ cluster:
 # стажем на канале получает сниженный risk_score (не полную защиту —
 # это TrustLevel.REGULAR, а не TRUSTED/marked_safe, которые даёт только
 # ручной MARK SAFE). Оба порога должны выполниться одновременно — см.
-# докстринг TrustConfig в bot/moderation/config.py.
+# докстринг TrustConfig в cigilbot/config.py.
 trust:
   enabled: true
   min_messages_for_regular: 20

@@ -2,7 +2,7 @@
 
 Ни один тест здесь не обращается к реальному Twitch API — это то, ради
 чего клиент был отделён от объектной модели twitchio (см. докстринг
-bot/moderation/twitch_api.py).
+cigilbot/twitch_api.py).
 """
 
 from __future__ import annotations

@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS mod_trusted (
 """
 
 # Bot Pattern Library (этап 9b) — именованные шаблоны атак, сопоставляемые
-# с уже посчитанным Verdict/ClusterInfo (bot/moderation/patterns.py), а не
+# с уже посчитанным Verdict/ClusterInfo (cigilbot/patterns.py), а не
 # новые детекторы. stats_json — счётчики срабатываний/false positive по
 # паттерну, накапливаются панелью (этап 9d), здесь только место для них.
 _MIGRATION_005_PATTERNS = """
@@ -213,7 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_mod_patterns_enabled ON mod_patterns(enabled);
 
 # pattern_id на mod_clusters/mod_verdicts — заполняется engine.py после
 # policy.decide(), когда patterns.match_patterns() нашёл подходящий
-# именованный шаблон (bot/moderation/patterns.py). mod_actions.pattern_id
+# именованный шаблон (cigilbot/patterns.py). mod_actions.pattern_id
 # уже существовал с этапа 7 (аудит действий), эти два — недостающая
 # половина: без них "почему сработало ИМЕННО это название" было бы видно
 # только в момент исполнения действия, а не на самой карточке кластера.

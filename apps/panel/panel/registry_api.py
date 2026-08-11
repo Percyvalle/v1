@@ -1,19 +1,25 @@
-"""API синхронизации Channel Registry: twitch-bots -> Cigilbot.
+"""Channel Registry: зеркалирование каналов и управление процессами.
 
-twitch-bots — источник правды по составу каналов (там оператор жмёт
-"Добавить канал"). Этот роутер принимает уведомление о новом/изменённом
+Экран ботов — источник правды по составу каналов (там оператор жмёт
+"Добавить канал"). POST /channels принимает уведомление о новом/изменённом
 канале и зеркалирует его в собственный registry.db Cigilbot — два
-независимых Channel Registry (см. docs/master-plan.html,
-направление 00), не общая БД.
+независимых Channel Registry (см. docs/master-plan.html, направление 00),
+не общая БД.
+
+Внутри монорепо этим эндпоинтом никто не пользуется. Пока панелей было
+две, panel/bots_api.py звал его по HTTP из своего процесса в чужой; теперь
+процесс один и зеркало пишется прямой записью в ту же БД (см.
+bots_api.py::api_add_channel). Эндпоинт оставлен рабочим входом для
+внешнего вызова — например, если реестром однажды станет управлять что-то
+за пределами этого репозитория.
 
 Аутентификация НЕ через cookie-сессию panel/auth.py (это не человек за
-браузером, а сервер-сервер вызов с одного localhost-процесса на другой) —
-общий секрет INTERNAL_SYNC_TOKEN в заголовке X-Internal-Token, читаемый из
-того же .env, что PANEL_TWITCH_CLIENT_ID/SECRET (см.
-panel/moderation_server.py::ENV_FILENAME). Плюс проверка, что запрос
-пришёл с localhost — второй слой защиты на случай, если панель однажды
-станет доступна не только на 127.0.0.1 (см. риск, уже описанный в
-docstring panel/moderation_api.py про X-Panel-Role).
+браузером, а сервер-сервер вызов) — общий секрет INTERNAL_SYNC_TOKEN в
+заголовке X-Internal-Token, читаемый из того же корневого .env, что
+PANEL_TWITCH_CLIENT_ID/SECRET (см. panel/paths.py::ENV_FILE). Плюс
+проверка, что запрос пришёл с localhost — второй слой защиты на случай,
+если панель однажды станет доступна не только на 127.0.0.1 (см. риск, уже
+описанный в docstring panel/moderation_api.py про X-Panel-Role).
 """
 
 from __future__ import annotations
@@ -28,10 +34,10 @@ from pydantic import BaseModel
 from cigilbot import bot_process_control
 from cigilbot.registry_store import ChannelRecord, RegistryStore
 from panel.auth import require_authenticated
-from panel.paths import CIGILBOT_ROOT, ENV_FILE
+from panel.paths import CIGILBOT_VAR, ENV_FILE
 
 # Где лежит registry.db — см. тот же комментарий в moderation_api.py.
-ROOT = CIGILBOT_ROOT
+ROOT = CIGILBOT_VAR
 
 router = APIRouter(prefix="/api/registry")
 
@@ -220,9 +226,9 @@ async def reset_crash(
 
 
 # ---------------------------------------------------------------------------
-# Управление процессом main.py (чат-бот twitch-bots) — полностью независимо
-# от twitch-bots/panel/server.py (порт 8765), см. docstring
-# cigilbot/bot_process_control.py. Один процесс на все активные каналы
+# Управление процессом main.py (чат-бот twitch-bots) — отдельно от запуска
+# профилей в panel/bots_api.py, см. docstring cigilbot/bot_process_control.py
+# про то, почему это не дублирование. Один процесс на все активные каналы
 # (multi-channel), не per-channel — поэтому нет параметра broadcaster_id.
 # ---------------------------------------------------------------------------
 

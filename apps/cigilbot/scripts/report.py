@@ -24,7 +24,7 @@ from cigilbot.store import ModerationStore  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, required=True, help="Путь к mod.<profile>.db")
+    parser.add_argument("--db", type=Path, required=True, help="Путь к mod.<broadcaster_id>.db")
     parser.add_argument("--days", type=int, default=30, help="За сколько последних дней")
     return parser.parse_args()
 

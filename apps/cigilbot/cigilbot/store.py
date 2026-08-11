@@ -1,6 +1,6 @@
 """Персистентность движка модерации: пользователи, сообщения, вердикты, кластеры.
 
-ModerationStore живёт в собственном файле БД Cigilbot (mod.<profile>.db,
+ModerationStore живёт в собственном файле БД Cigilbot (mod.<broadcaster_id>.db,
 см. panel/moderation_api.py::_db_path), физически отдельном от
 bot.<instance>.db в twitch-bots. Единственная точка, где Cigilbot касается
 чужого файла БД — cigilbot/inbox.py (входящая очередь чата от main.py),
@@ -465,7 +465,7 @@ class ModerationStore:
         повторного исполнения: ban_user()/timeout_user() в Twitch Helix
         идемпотентны (повторный бан уже забаненного просто не меняет
         состояние или возвращает ту же ошибку, не банит "дважды сильнее") —
-        см. bot/moderation/twitch_api.py. Возвращает число реклеймленных
+        см. cigilbot/twitch_api.py. Возвращает число реклеймленных
         заданий (для логирования вызывающим кодом)."""
         cutoff = time.time() - timeout_seconds
         cursor = await self._db.execute(

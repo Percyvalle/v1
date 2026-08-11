@@ -56,7 +56,11 @@ async def tmp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         broadcaster_id=DEFAULT_TEST_BROADCASTER_ID, login=DEFAULT_TEST_CHANNEL, registered_by="manual"
     )
     await registry.close()
+    # ROOT — состояние (mod.*.db, registry.db), SRC_ROOT — исходники
+    # (config/moderation.yml). В проде это разные каталоги (var/cigilbot и
+    # apps/cigilbot), в тесте обе подмены ведут в одну tmp-папку.
     monkeypatch.setattr(moderation_api, "ROOT", tmp_path)
+    monkeypatch.setattr(moderation_api, "SRC_ROOT", tmp_path)
     return tmp_path
 
 

@@ -41,23 +41,30 @@ from pydantic import BaseModel
 # не имели вообще никакой проверки авторизации, потому что require_authenticated
 # существовал только "после" них по тексту файла и никогда не подключался.
 # panel.auth не импортирует этот модуль (проверено), цикла нет.
+from bot import paths as bot_paths
 from bot.registry import ChannelRegistry
 from bot.twitch_helix import HelixResolveError, HelixResolver
 from cigilbot.registry_store import RegistryStore
 from panel.auth import require_role_min
-from panel.paths import BOT_ROOT, CIGILBOT_ROOT, ENV_FILE, MAIN_PROFILE, VENV_PYTHON
+from panel.paths import BOT_ROOT, BOT_VAR, CIGILBOT_VAR, ENV_FILE, MAIN_PROFILE, VENV_PYTHON
 
 log = logging.getLogger("panel.bots")
 
-# Корень apps/twitch-bots. Раньше был `ROOT = Path(__file__).parent.parent` и
-# означал заодно и корень проекта, и место .env, и место БД — после переезда
-# панели в apps/panel/ это совпадение развалилось, см. panel/paths.py.
+# Раньше здесь был один `ROOT = Path(__file__).parent.parent`, и он означал
+# сразу три вещи: корень проекта, место .env и место БД. Совпадение
+# развалилось дважды — когда панель уехала в apps/panel, и когда рабочее
+# состояние уехало в var/. Теперь каталоги названы по смыслу (paths.py).
+#
+# ROOT — исходники apps/twitch-bots: .env.<profile>, prompts/, main.py.
 ROOT = BOT_ROOT
 
+# VAR — рабочее состояние: bot.db, registry.db, usage.json, логи, pid.
+VAR = BOT_VAR
+
 PROMPTS_DIR = ROOT / "prompts"
-CHANNEL_HISTORY_FILE = ROOT / "panel_state" / "channel_history.json"
+CHANNEL_HISTORY_FILE = VAR / "panel_state" / "channel_history.json"
 MAX_CHANNEL_HISTORY = 8
-PROMPT_HISTORY_DIR = ROOT / "panel_state" / "prompt_history"
+PROMPT_HISTORY_DIR = VAR / "panel_state" / "prompt_history"
 MAX_PROMPT_HISTORY = 15
 
 # DeepSeek-chat, USD за 1M токенов — грубая оценка без учёта кэш-скидки
@@ -267,8 +274,8 @@ def write_env_values(profile: str, updates: dict[str, str]) -> None:
 
 def _pid_file(profile: str, kind: str) -> Path:
     if profile == MAIN_PROFILE:
-        return ROOT / f"{kind}.pid"
-    return ROOT / f"{kind}.{profile}.pid"
+        return VAR / "run" / f"{kind}.pid"
+    return VAR / "run" / f"{kind}.{profile}.pid"
 
 
 def _read_pid(path: Path) -> int | None:
@@ -345,6 +352,11 @@ def _start(profile: str, script: str, pid_file: Path, log_out: Path, log_err: Pa
     """Обёрнуто в _pid_lock() — см. docstring там же. Проверка
     _is_running() внутри лока, а не только у вызывающей стороны
     (start_profile), закрывает гонку между двумя параллельными вызовами."""
+    # До _pid_lock: lock-файл лежит рядом с pid-файлом в var/twitch-bots/run,
+    # и без каталога os.open(O_CREAT) упадёт раньше запуска. На чистом клоне
+    # var/ не существует — он целиком в .gitignore.
+    bot_paths.ensure_dirs()
+
     with _pid_lock(pid_file):
         if _is_running(pid_file):
             existing = _read_pid(pid_file)
@@ -378,7 +390,7 @@ def _instance_path(profile: str, name: str, ext: str) -> Path:
     панель должна читать ФАЙЛЫ ТОГО ЖЕ инстанса, что сейчас запущен."""
     instance = read_env(profile).get("INSTANCE", "").strip()
     filename = f"{name}.{instance}.{ext}" if instance else f"{name}.{ext}"
-    return ROOT / filename
+    return VAR / filename
 
 
 def db_path(profile: str) -> Path:
@@ -405,7 +417,7 @@ def usage_path(profile: str) -> Path:
 
 
 def log_path(profile: str) -> Path:
-    return ROOT / "logs" / _instance_path(profile, "bot", "log").name
+    return VAR / "logs" / _instance_path(profile, "bot", "log").name
 
 
 def get_usage(profile: str) -> dict:
@@ -487,8 +499,8 @@ def get_profile_status(profile: str) -> dict:
 
 
 def start_profile(profile: str, voice: bool = True) -> dict:
-    logs_dir = ROOT / "logs"
-    logs_dir.mkdir(exist_ok=True)
+    logs_dir = VAR / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     started = {}
     if voice and read_env(profile).get("VOICE_ENABLED", "false").lower() == "true":
@@ -628,7 +640,7 @@ async def api_new_profile(
 # panel/registry_api.py) — он по-прежнему защищён токеном и остаётся
 # рабочим входом для внешнего вызова, просто панель больше им не
 # пользуется для себя.
-CIGILBOT_REGISTRY_DB = CIGILBOT_ROOT / "registry.db"
+CIGILBOT_REGISTRY_DB = CIGILBOT_VAR / "registry.db"
 
 
 @router.post("/api/channels")
@@ -671,7 +683,7 @@ async def api_add_channel(payload: dict, session: tuple[str, str] = require_role
         return JSONResponse({"error": f"канал {login!r} не найден на Twitch"}, status_code=404)
     user = users[0]
 
-    registry = ChannelRegistry(str(ROOT / "registry.db"))
+    registry = ChannelRegistry(str(VAR / "registry.db"))
     await registry.connect()
     try:
         record = await registry.upsert_channel(broadcaster_id=user.id, login=user.login)
@@ -737,7 +749,7 @@ def _remember_channel(channel: str) -> None:
     history = [c for c in _load_channel_history() if c != channel]
     history.insert(0, channel)
     history = history[:MAX_CHANNEL_HISTORY]
-    CHANNEL_HISTORY_FILE.parent.mkdir(exist_ok=True)
+    CHANNEL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     CHANNEL_HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
 
 
@@ -863,7 +875,7 @@ async def api_apply_prompt(
     was_running = _is_running(bot_pid_file)
     if was_running:
         _stop_pid(bot_pid_file)
-        logs_dir = ROOT / "logs"
+        logs_dir = VAR / "logs"
         suffix = f".{payload.profile}" if payload.profile != MAIN_PROFILE else ""
         _start(payload.profile, "main.py", bot_pid_file,
                logs_dir / f"stdout{suffix}.log", logs_dir / f"stderr{suffix}.log")

@@ -4,7 +4,7 @@
 #
 # ВАЖНО: suspicious_languages НЕ означает "бан за язык". Это означает
 # "для этого канала данный язык может повышать risk score внутри кластера,
-# наравне с остальными слабыми сигналами". См. bot/moderation/detectors/language.py
+# наравне с остальными слабыми сигналами". См. cigilbot/detectors/language.py
 # и раздел 9 docs/moderation-plan.md.
 
 channel_profile:

@@ -44,7 +44,9 @@ class TestEnvProfileChannels:
         bot.mkdir()
         (repo / ".env").write_text("TWITCH_CHANNEL=streamer\n", encoding="utf-8")
 
-        roots = PanelRoots(repo=repo, bot=bot, cigilbot=tmp_path)
+        roots = PanelRoots(
+            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+        )
         assert _list_env_profile_channels(roots) == {"main": "streamer"}
 
     def test_named_profiles_read_from_bot_root(self, tmp_path: Path) -> None:
@@ -55,7 +57,9 @@ class TestEnvProfileChannels:
         (repo / ".env").write_text("TWITCH_CHANNEL=main_channel\n", encoding="utf-8")
         (bot / ".env.second").write_text("TWITCH_CHANNEL=#SecondChannel\n", encoding="utf-8")
 
-        roots = PanelRoots(repo=repo, bot=bot, cigilbot=tmp_path)
+        roots = PanelRoots(
+            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+        )
         # Канал нормализуется (без #, нижний регистр) — как и везде в auth.py.
         assert _list_env_profile_channels(roots) == {
             "main": "main_channel",
@@ -74,7 +78,9 @@ class TestEnvProfileChannels:
         # роль по нему считать не по чему.
         (bot / ".env.blank").write_text("TWITCH_CHANNEL=\n", encoding="utf-8")
 
-        roots = PanelRoots(repo=repo, bot=bot, cigilbot=tmp_path)
+        roots = PanelRoots(
+            repo=repo, bot=bot, cigilbot=tmp_path, bot_var=tmp_path, cigilbot_var=tmp_path
+        )
         assert _list_env_profile_channels(roots) == {"main": "main_channel"}
 
     def test_missing_env_files_are_not_an_error(self, tmp_path: Path) -> None:
@@ -147,3 +153,27 @@ class TestPanelRoots:
         assert (roots.bot / "main.py").exists()
         assert (roots.cigilbot / "cigilbot").is_dir()
         assert roots.repo == roots.bot.parent.parent
+
+    def test_state_lives_outside_the_source_trees(self) -> None:
+        """Ровно то, ради чего заведён var/: рабочее состояние не внутри
+        каталогов с исходниками. Если кто-то вернёт БД обратно в проект,
+        сломается это утверждение, а не только вкус."""
+        roots = PanelRoots.default()
+        assert roots.bot_var == roots.repo / "var" / "twitch-bots"
+        assert roots.cigilbot_var == roots.repo / "var" / "cigilbot"
+        for var_dir in (roots.bot_var, roots.cigilbot_var):
+            assert not var_dir.is_relative_to(roots.bot)
+            assert not var_dir.is_relative_to(roots.cigilbot)
+
+    def test_panel_and_engines_agree_on_state_dirs(self) -> None:
+        """panel/paths.py дублирует определения из bot/paths.py и
+        cigilbot/paths.py (импортировать их оттуда мешает порядок
+        sys.path-бутстрапа). Дубль обязан совпадать: разъедется — панель
+        будет писать в один файл, а движок читать другой."""
+        from bot import paths as bot_paths
+        from cigilbot import paths as cigilbot_paths
+
+        roots = PanelRoots.default()
+        assert roots.bot_var == bot_paths.VAR
+        assert roots.cigilbot_var == cigilbot_paths.VAR
+        assert roots.repo == bot_paths.REPO_ROOT == cigilbot_paths.REPO_ROOT

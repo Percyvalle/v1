@@ -40,7 +40,7 @@ panel/paths.py         — три корня (repo/bot/cigilbot) и PanelRoots
 panel/auth.py          — вход через Twitch OAuth, роли, токен бота
 panel/moderation_api.py — REST+WS модерации (/api/moderation)
 panel/registry_api.py  — Channel Registry (/api/registry)
-panel/bots_api.py      — экран ботов (/bots, /api/*), бывший twitch-bots/panel/server.py
+panel/bots_api.py      — экран ботов (/bots, /api/*), бывший apps/panel/panel/bots_api.py
 panel/static/          — moderation.html/.js и index.html
 scripts/merge_panel_admins.py — разовый перенос panel_admins -> mod_panel_users
 ```

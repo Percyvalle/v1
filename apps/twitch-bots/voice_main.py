@@ -1,12 +1,16 @@
 import asyncio
 import logging
 
+from bot import paths
 from bot.audio_source import build_source
 from bot.config import load_config
 from bot.voice import VoiceListener
 from bot.voice_queue import VoiceQueue
 
 cfg = load_config()
+
+# До basicConfig — см. тот же комментарий в main.py.
+paths.ensure_dirs()
 
 logging.basicConfig(
     level=logging.INFO,

@@ -40,7 +40,7 @@ from panel.auth import load_panel_auth_config
 from panel.auth import router as auth_router
 from panel.bots_api import router as bots_router
 from panel.moderation_api import router as moderation_router
-from panel.paths import CIGILBOT_ROOT, ENV_FILE, MAIN_PROFILE, PanelRoots
+from panel.paths import CIGILBOT_VAR, ENV_FILE, MAIN_PROFILE, PanelRoots
 from panel.registry_api import router as registry_router
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -54,14 +54,14 @@ def db_path(profile: str) -> Path:
     не действовал на экране модерации. Победила mod.db — bot.db принадлежит
     боту и пересоздаётся им на каждом старте через executescript без
     версионирования, тогда как здесь есть настоящие миграции."""
-    return CIGILBOT_ROOT / f"mod.{profile}.db" if profile != MAIN_PROFILE else CIGILBOT_ROOT / "mod.db"
+    return CIGILBOT_VAR / f"mod.{profile}.db" if profile != MAIN_PROFILE else CIGILBOT_VAR / "mod.db"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Фоновая задача внутри процесса панели, не отдельный OS-процесс — см.
     # докстринг cigilbot/supervisor.py про компромисс этого решения.
-    task = asyncio.create_task(supervisor_loop(str(CIGILBOT_ROOT / "registry.db")))
+    task = asyncio.create_task(supervisor_loop(str(CIGILBOT_VAR / "registry.db")))
     try:
         yield
     finally:

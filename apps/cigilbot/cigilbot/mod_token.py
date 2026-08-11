@@ -1,6 +1,6 @@
 """Токен модератора для реальных действий (executor.py) — с автообновлением.
 
-Отдельно от bot/moderation/twitch_api.py::HelixClient._get_app_token()
+Отдельно от cigilbot/twitch_api.py::HelixClient._get_app_token()
 (App Access Token, client_credentials, не привязан к пользователю): здесь —
 User Access Token аккаунта БОТА со scope moderator:manage:banned_users
 (+ moderator:manage:chat_messages), который Twitch выдаёт на ограниченное
@@ -73,7 +73,7 @@ def _read_env_file(env_file: Path) -> dict[str, str]:
 
 def _write_env_values(env_file: Path, updates: dict[str, str]) -> None:
     """Точечная запись без потери остального файла — тот же приём, что
-    panel/server.py::write_env_values() и panel/auth.py::_write_env_values(),
+    panel/bots_api.py::write_env_values() и panel/auth.py::_write_env_values(),
     продублирован ещё раз намеренно: этот модуль живёт в процессе бота и не
     должен импортировать panel.* (та сторона наоборот может импортировать
     cigilbot.*, обратная зависимость создала бы цикл при желании)."""

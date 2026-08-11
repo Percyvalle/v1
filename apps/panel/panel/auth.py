@@ -101,7 +101,7 @@ _STATE_TTL_SECONDS = 600  # окно на прохождение логина н
 
 router = APIRouter(prefix="/auth")
 
-# Инъекция транспорта для тестов — тот же приём, что bot/moderation/twitch_api.py
+# Инъекция транспорта для тестов — тот же приём, что cigilbot/twitch_api.py
 # (httpx.MockTransport), чтобы тестировать OAuth-обмен и Helix-проверки без
 # единого реального запроса к Twitch. None в проде -> обычный сетевой транспорт.
 _test_transport: httpx.AsyncBaseTransport | None = None
@@ -312,7 +312,7 @@ async def _list_profile_channels(roots: PanelRoots) -> dict[str, str]:
 
     result = _list_env_profile_channels(roots)
 
-    registry = RegistryStore(str(roots.cigilbot / "registry.db"))
+    registry = RegistryStore(str(roots.cigilbot_var / "registry.db"))
     await registry.connect()
     try:
         channels = await registry.list_channels(status=None)
@@ -703,7 +703,7 @@ AuthenticatedRole = Depends(require_authenticated)
 # на Twitch, и именно под этим логином придёт токен. Если в браузере
 # сейчас открыт личный аккаунт владельца панели — токен получится на его
 # имя, а не на бота, и последующий ban_user() будет падать (moderator_id
-# должен совпадать с владельцем токена, см. bot/moderation/twitch_api.py).
+# должен совпадать с владельцем токена, см. cigilbot/twitch_api.py).
 # Мы не можем это предотвратить программно (Twitch не даёt выбрать логин
 # заранее), поэтому auth_bot_callback только предупреждает в ответе, если
 # вошедший — сам broadcaster, а не отдельный аккаунт бота.

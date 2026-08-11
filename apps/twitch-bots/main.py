@@ -9,6 +9,7 @@ from pathlib import Path
 
 from twitchio.ext import commands
 
+from bot import paths
 from bot.brain import Brain
 from bot.config import load_config
 from bot.database import Database
@@ -20,6 +21,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 cfg = load_config()
+
+# До basicConfig: FileHandler ниже открывает файл сразу и падает, если
+# каталога нет. На чистом клоне var/ не существует вовсе — он целиком в
+# .gitignore, там нечему быть в репозитории.
+paths.ensure_dirs()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -219,7 +225,7 @@ async def _load_initial_channels() -> list[str]:
     первом запуске до того, как через панель добавили хоть один канал),
     бот всё равно подключается к каналу из .env, чтобы не остаться совсем
     без подключения."""
-    registry = ChannelRegistry(str(ROOT / "registry.db"))
+    registry = ChannelRegistry(str(paths.VAR / "registry.db"))
     await registry.connect()
     try:
         channels = await registry.list_channels(status="active")

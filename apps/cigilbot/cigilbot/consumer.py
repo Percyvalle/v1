@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from cigilbot import paths
 from cigilbot.config import load_channel_profile, load_config as load_moderation_config
 from cigilbot.engine import ModerationEngine
 from cigilbot.executor import ActionExecutor, process_pending
@@ -234,7 +235,7 @@ class ModerationConsumer:
     async def _poll_state_sync(self) -> None:
         """Было main.py::_poll_moderation_updates. Панель — отдельный
         процесс, меняющий Attack Mode/Pattern Library/feedback через ту же
-        mod.<profile>.db — движок не видит эти изменения автоматически,
+        mod.<broadcaster_id>.db — движок не видит эти изменения автоматически,
         поэтому перечитывает их периодически. Частоты как в исходнике:
         Attack Mode/Pattern Library каждый тик (10 сек, панический режим
         должен реагировать быстро), fp_penalty реже (копится медленно)."""
@@ -322,7 +323,7 @@ class ModerationConsumer:
 async def _resolve_channel(broadcaster_id: str) -> str:
     """Читает login канала из своего registry.db по broadcaster_id — источник
     правды для конфигурации канала теперь Registry, не .env.<profile>."""
-    registry = RegistryStore(str(ROOT / "registry.db"))
+    registry = RegistryStore(str(paths.REGISTRY_DB))
     await registry.connect()
     try:
         record = await registry.get_channel(broadcaster_id)
@@ -342,9 +343,17 @@ def main() -> None:
         raise SystemExit("Использование: python -m cigilbot.consumer <broadcaster_id>")
     broadcaster_id = sys.argv[1]
 
-    # Корневой .env — PANEL_TWITCH_CLIENT_ID/SECRET (mod_token_manager),
-    # BOT_PROJECT_ROOT. Конфигурация канала (login) больше не в .env файлах.
-    _load_env_file(ROOT / ".env")
+    # Единственный .env монорепо — PANEL_TWITCH_CLIENT_ID/SECRET
+    # (mod_token_manager), TWITCH_MOD_* и BOT_PROJECT_ROOT. Конфигурация
+    # канала (login) не в .env, а в Registry.
+    #
+    # Тот же файл, в который panel/auth.py::_write_env_values кладёт
+    # TWITCH_MOD_* после входа под аккаунтом бота. Если эти два пути
+    # разойдутся, панель отрапортует о полученном токене, а executor
+    # прочитает пустоту и все баны будут падать с 401.
+    _load_env_file(paths.REPO_ROOT / ".env")
+
+    paths.ensure_dirs()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -360,9 +369,9 @@ def main() -> None:
     # все каналы бота (не bot.<instance>.db) — один бот-аккаунт обслуживает
     # все каналы сразу, инстансов больше нет.
     bot_project_root = Path(os.environ.get("BOT_PROJECT_ROOT", str(ROOT.parent / "twitch-bots")))
-    bot_db_path = bot_project_root / "bot.db"
+    bot_db_path = paths.bot_db(bot_project_root)
 
-    mod_db_path = ROOT / f"mod.{broadcaster_id}.db"
+    mod_db_path = paths.mod_db(broadcaster_id)
 
     consumer = ModerationConsumer(
         broadcaster_id=broadcaster_id,

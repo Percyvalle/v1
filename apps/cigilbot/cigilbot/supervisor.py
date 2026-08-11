@@ -1,7 +1,7 @@
 """Фоновый луп, поддерживающий consumer-процессы в соответствии с
 desired_state в registry.db.
 
-Запускается как asyncio-таск ВНУТРИ процесса панели (panel/moderation_server.py
+Запускается как asyncio-таск ВНУТРИ процесса панели (apps/panel/panel/server.py
 lifespan), не отдельным OS-процессом — компромисс, принятый явно: supervisor
 не делает тяжёлой работы сам (только subprocess.Popen/taskkill + чтение
 registry.db), реальная нагрузка всегда в отдельном процессе consumer.py.

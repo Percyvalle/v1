@@ -34,6 +34,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BOT_ROOT = REPO_ROOT / "apps" / "twitch-bots"
 CIGILBOT_ROOT = REPO_ROOT / "apps" / "cigilbot"
 
+# Рабочее состояние — отдельно от исходников, по каталогу на владельца.
+# Определения дублируются в bot/paths.py и cigilbot/paths.py: панель не
+# может импортировать их оттуда раньше, чем отработает sys.path-бутстрап в
+# panel/__init__.py, а сам бутстрап импортирует этот модуль. Три строки
+# дубля дешевле, чем ленивый импорт в каждой точке использования.
+BOT_VAR = REPO_ROOT / "var" / "twitch-bots"
+CIGILBOT_VAR = REPO_ROOT / "var" / "cigilbot"
+
 # Единственный .env монорепо (см. докстринг выше про связку с consumer.py).
 ENV_FILE = REPO_ROOT / ".env"
 
@@ -68,16 +76,28 @@ class PanelRoots:
     """Где лежит единственный .env: PANEL_TWITCH_*, TWITCH_MOD_*."""
 
     bot: Path
-    """apps/twitch-bots: .env.<profile>, bot.db, main.py, prompts/."""
+    """apps/twitch-bots: .env.<profile>, main.py, prompts/ — исходники."""
 
     cigilbot: Path
-    """apps/cigilbot: registry.db, mod.db, mod.<broadcaster_id>.db."""
+    """apps/cigilbot: движок модерации и config/ — исходники."""
+
+    bot_var: Path
+    """var/twitch-bots: bot.db, registry.db, usage.json, логи, pid."""
+
+    cigilbot_var: Path
+    """var/cigilbot: registry.db, mod.db, mod.<broadcaster_id>.db, логи, pid."""
 
     @classmethod
     def default(cls) -> PanelRoots:
-        return cls(repo=REPO_ROOT, bot=BOT_ROOT, cigilbot=CIGILBOT_ROOT)
+        return cls(
+            repo=REPO_ROOT,
+            bot=BOT_ROOT,
+            cigilbot=CIGILBOT_ROOT,
+            bot_var=BOT_VAR,
+            cigilbot_var=CIGILBOT_VAR,
+        )
 
     @classmethod
     def all_at(cls, path: Path) -> PanelRoots:
-        """Все три корня в одной папке — для тестов."""
-        return cls(repo=path, bot=path, cigilbot=path)
+        """Все корни в одной папке — для тестов."""
+        return cls(repo=path, bot=path, cigilbot=path, bot_var=path, cigilbot_var=path)
