@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Модерация</title>
+<style>
+/* Design tokens — операторская панель, работающая часами на фоне: тёмная
+   база с многослойной глубиной (l0..l3), янтарный акцент вместо типового
+   AI-фиолетового (роль этой панели — "приборная доска тревоги", не чат-бот),
+   и отдельная семантика риска (info/warn/danger), не завязанная на акцент. */
+:root {
+  --l0: #0a0b0e;
+  --l0-grad: radial-gradient(1200px 600px at 15% -10%, #14131c 0%, #0a0b0e 45%), var(--l0);
+  --l1: #121319;
+  --l2: #1a1c24;
+  --l3: #23252f;
+  --border: #2a2c38;
+  --border-soft: #1e2029;
+  --border-strong: #383b4a;
+
+  --text: #f2f3f6;
+  --text-dim: #a3a8b8;
+  --text-faint: #666b7d;
+
+  --accent: #f0a83c;
+  --accent-soft: #f0a83c1f;
+  --accent-hover: #ffc266;
+  --accent-text: #ffce85;
+  --accent-ink: #241704;
+
+  --success: #35d68e;
+  --success-soft: #35d68e1e;
+  --warning: #f0a83c;
+  --warning-soft: #f0a83c1f;
+  --danger: #ff5c6c;
+  --danger-soft: #ff5c6c20;
+  --danger-strong: #ff3b4e;
+  --info: #4f9bff;
+  --info-soft: #4f9bff1e;
+
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -10px rgba(0,0,0,.55);
+  --shadow-pop: 0 24px 70px -14px rgba(0,0,0,.7);
+  --shadow-glow-accent: 0 3px 10px -3px #f0a83c4d;
+
+  --ease: cubic-bezier(.22,1,.36,1);
+  --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--l0-grad); background-attachment: fixed; color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px; -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2e37; border-radius: 8px; border: 2px solid var(--l1); }
+::-webkit-scrollbar-thumb:hover { background: #363b47; }
+
+::selection { background: var(--accent-soft); color: var(--accent-text); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-item:focus-visible { outline-offset: -2px; }
+
+.app { display: flex; height: 100vh; }
+
+.sidebar {
+  width: 240px; flex: none; background: var(--l1); border-right: 1px solid var(--border-soft);
+  display: flex; flex-direction: column; padding: 18px 14px;
+  position: relative;
+}
+.sidebar::after {
+  content: ""; position: absolute; top: 0; right: -1px; width: 1px; height: 100%;
+  background: linear-gradient(180deg, transparent, var(--border-strong) 15%, var(--border-strong) 85%, transparent);
+}
+.brand { display: flex; align-items: center; gap: 11px; padding: 4px 6px 20px; text-decoration: none; color: inherit; }
+.brand-mark {
+  width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #ff7a59);
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; color: var(--accent-ink);
+  box-shadow: 0 4px 10px -3px rgba(0,0,0,.5); flex: none;
+}
+.brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.brand-sub { font-size: 10.5px; color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-top: 1px; }
+
+.nav-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--text-faint); padding: 16px 10px 8px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 13.5px; font-weight: 500; color: var(--text-dim);
+  position: relative; transition: background .12s var(--ease), color .12s var(--ease);
+  margin-bottom: 1px;
+}
+.nav-item .nav-icon { width: 16px; height: 16px; flex: none; color: var(--text-faint); transition: color .12s var(--ease); }
+.nav-item:hover { background: var(--l2); color: var(--text); }
+.nav-item:hover .nav-icon { color: var(--text-dim); }
+.nav-item.active {
+  background: var(--accent-soft); color: var(--accent-text); font-weight: 600;
+}
+.nav-item.active .nav-icon { color: var(--accent); }
+.nav-item.active::before {
+  content: ""; position: absolute; left: -11px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 18px; border-radius: 3px; background: var(--accent);
+}
+
+.field { margin-top: auto; padding: 12px 8px 8px; border-top: 1px solid var(--border-soft); margin-bottom: 4px; }
+.field label { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); margin-bottom: 6px; }
+.field select, .field input {
+  width: 100%; background: var(--l2); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 7px 9px; font-size: 12.5px; margin-bottom: 8px;
+  transition: border-color .12s var(--ease);
+}
+.field select:hover, .field input:hover { border-color: var(--border-strong); }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: 60px; flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 26px; border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, #101117, transparent);
+}
+.topbar h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+.conn-pill {
+  display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-dim);
+  padding: 5px 12px 5px 10px; border-radius: var(--radius-pill); background: var(--l2); border: 1px solid var(--border);
+}
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.conn-dot.on { background: var(--success); box-shadow: 0 2px 6px -1px #35d68e88; animation: dot-breathe 2.4s ease-in-out infinite; }
+.conn-dot.off { background: var(--danger); box-shadow: 0 2px 6px -1px #ff5c6c88; }
+@keyframes dot-breathe { 0%, 100% { box-shadow: 0 2px 6px -1px #35d68e88; } 50% { box-shadow: 0 3px 10px -1px #35d68eaa; } }
+
+.content { flex: 1; overflow-y: auto; padding: 24px 26px 40px; }
+.screen { display: none; }
+.screen.active { display: block; animation: screen-in .18s var(--ease); }
+@keyframes screen-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* JS переключает эти узлы через style.display = "block"/"none" на разных
+   экранах (см. moderation.js) — .empty поэтому не может быть display:flex
+   (инлайновый style всегда победит класс); раскладка держится на ::before
+   как block-элементе, а не на flex-контейнере. */
+.empty {
+  color: var(--text-faint); font-size: 13px; padding: 34px 20px; text-align: center;
+}
+.empty::before {
+  content: ""; display: block; width: 26px; height: 26px; margin: 0 auto 12px;
+  border-radius: 50%; border: 1.5px dashed var(--border-strong);
+}
+
+/* Пояснительный текст внутри карточки — НЕ состояние "нет данных",
+   поэтому без иконки .empty. Раньше эти блоки ошибочно переиспользовали
+   класс .empty только ради приглушённого цвета текста. */
+.note { color: var(--text-dim); font-size: 12.5px; line-height: 1.6; }
+
+/* Секции контента — заголовок несёт собственный вес, доп. подпись не нужна */
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin: 28px 0 12px;
+}
+.section-head:first-child { margin-top: 0; }
+.section-head h2 { font-size: 13px; font-weight: 700; margin: 0; letter-spacing: -.005em; }
+.section-count {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-faint);
+  background: var(--l2); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 1px 8px; font-variant-numeric: tabular-nums;
+}
+
+/* Кластеры */
+.cluster-list { display: flex; flex-direction: column; gap: 10px; }
+.cluster-card {
+  background: var(--l1); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  padding: 15px 17px; box-shadow: var(--shadow-card);
+  transition: border-color .15s var(--ease);
+}
+.cluster-card:hover { border-color: var(--border-strong); }
+.cluster-card.risk-high { border-color: #ff5c6c40; }
+.cluster-card.risk-critical {
+  border-color: #ff5c6c66;
+  background: linear-gradient(180deg, #ff5c6c14, var(--l1) 90px);
+  box-shadow: var(--shadow-card), 0 0 0 1px #ff5c6c1a;
+}
+.cluster-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cluster-title { display: flex; align-items: center; gap: 10px; }
+.risk-badge {
+  font-family: var(--mono); font-weight: 700; font-size: 13px; padding: 3px 9px;
+  border-radius: var(--radius-sm); font-variant-numeric: tabular-nums;
+}
+.risk-badge.low { background: var(--info-soft); color: var(--info); }
+.risk-badge.medium { background: var(--warning-soft); color: var(--warning); }
+.risk-badge.high, .risk-badge.critical { background: var(--danger-soft); color: var(--danger); }
+.cluster-size { font-weight: 600; font-size: 13.5px; }
+.cluster-meta { color: var(--text-faint); font-size: 12px; }
+
+.signal-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.chip {
+  font-size: 11.5px; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--l2);
+  color: var(--text-dim); border: 1px solid var(--border);
+}
+.chip-clickable { cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease); }
+.chip-clickable:hover { background: var(--success-soft); color: var(--success); border-color: var(--success); }
+
+.cluster-actions { display: flex; gap: 8px; margin-top: 13px; }
+.btn {
+  border: none; border-radius: var(--radius-sm); padding: 7px 14px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: filter .15s var(--ease), transform .1s var(--ease);
+}
+.btn:hover { filter: brightness(1.12); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .4; cursor: not-allowed; filter: none; transform: none; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-danger { background: var(--danger); color: #2a0508; }
+.btn-warning { background: var(--warning); color: var(--accent-ink); }
+.btn-ghost { background: var(--l2); color: var(--text-dim); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--text); border-color: var(--border-strong); }
+.btn-accent { background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow-glow-accent); }
+
+/* Лента вердиктов
+   flex-wrap — иначе чипы сигналов (3-4 штуки на активном чате) выдавливают
+   ник и причину за пределы строки: у обоих overflow:hidden, поэтому они
+   не обрезаются видимо, а просто пропадают из вёрстки целиком, оставляя
+   в строке только чипы и время (жалоба: "не понимаю к чему это относится",
+   #2611). Первая строка — кто и что решено, вторая — почему (чипы). */
+.verdict-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 14px;
+  border-radius: var(--radius-sm); border-bottom: 1px solid var(--border-soft); font-size: 13px;
+  transition: background .1s var(--ease);
+}
+.verdict-row:hover { background: var(--l2); }
+.verdict-row:last-child { border-bottom: none; }
+.verdict-login { font-weight: 600; flex: 0 0 auto; }
+.verdict-action {
+  font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+  min-width: 66px; text-align: center; letter-spacing: .01em; flex: 0 0 auto;
+}
+.verdict-action.OBSERVE { background: var(--info-soft); color: var(--info); }
+.verdict-action.TIMEOUT { background: var(--warning-soft); color: var(--warning); }
+.verdict-action.BAN { background: var(--danger-soft); color: var(--danger); }
+.verdict-reason { color: var(--text-faint); font-size: 12px; flex: 1 1 100%; }
+.verdict-time { color: var(--text-faint); font-size: 11.5px; font-family: var(--mono); font-variant-numeric: tabular-nums; margin-left: auto; flex: 0 0 auto; }
+.verdict-signals-label { color: var(--text-faint); font-size: 11px; flex: 0 0 100%; margin-top: 2px; }
+/* Само сообщение, из-за которого бот насторожился — то, чего не хватало
+   пользователю, чтобы понять причину пометки (#2611, второй заход). */
+.verdict-message { color: var(--text); font-size: 13px; flex: 1 1 100%; word-break: break-word; }
+.verdict-message-missing { color: var(--text-faint); font-style: italic; }
+
+/* Аудит */
+.audit-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.audit-table th {
+  text-align: left; color: var(--text-faint); font-weight: 700; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .05em; padding: 9px 12px; border-bottom: 1px solid var(--border);
+}
+.audit-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.audit-table tr:last-child td { border-bottom: none; }
+.audit-table tr:hover td { background: var(--l2); }
+.role-tag {
+  font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--l2); color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.card { background: var(--l1); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 18px; box-shadow: var(--shadow-card); }
+.card-title { font-size: 13px; font-weight: 700; margin-bottom: 14px; letter-spacing: -.005em; }
+
+/* Модалка подтверждения */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(6,6,9,.72); backdrop-filter: blur(3px); display: none;
+  align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.open { display: flex; animation: overlay-in .15s var(--ease); }
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  width: 420px; background: var(--l1); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  padding: 24px; box-shadow: var(--shadow-pop);
+  animation: modal-in .18s var(--ease);
+}
+@keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.modal h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: -.01em; }
+.modal p { color: var(--text-dim); font-size: 13.5px; line-height: 1.55; }
+.modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+.toast-stack { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+.toast {
+  background: var(--l2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 11px 15px;
+  font-size: 12.5px; font-weight: 500; box-shadow: var(--shadow-pop); max-width: 320px;
+  animation: toast-in .2s var(--ease);
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+.toast.error { border-color: var(--danger); color: #ffb3ba; background: #2a1013; }
+.toast.success { border-color: var(--success); color: #a7f3d4; background: #0f2419; }
+
+/* Экран входа */
+.login-overlay {
+  position: fixed; inset: 0; background: var(--l0-grad); display: flex;
+  align-items: center; justify-content: center; z-index: 300;
+}
+.login-card {
+  width: 380px; text-align: center; background: var(--l1); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 36px 30px; box-shadow: var(--shadow-pop);
+}
+.login-card h2 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.01em; }
+.login-card p { color: var(--text-dim); font-size: 13px; line-height: 1.6; margin: 0; }
+
+/* Карточка пользователя в сайдбаре */
+.user-card {
+  margin-top: 12px; padding: 10px; border-radius: var(--radius-md); background: var(--l2);
+  display: flex; align-items: center; gap: 10px;
+}
+.user-avatar {
+  width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), #ff8a5c); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;
+  flex: none; text-transform: uppercase;
+}
+.user-info { flex: 1; min-width: 0; }
+.user-login { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-role { font-size: 11px; color: var(--text-faint); }
+.btn-small { padding: 4px 8px; font-size: 11px; }
+.bot-pulse { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-faint); }
+.bot-pulse.on { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+
+/* Attack Mode */
+.attack-banner {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+  padding: 4px 12px; border-radius: var(--radius-pill); background: var(--danger-soft); color: var(--danger);
+  animation: attack-pulse 1.6s ease-in-out infinite;
+}
+@keyframes attack-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .6; } }
+.attack-status-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.attack-status-card .big-state { font-size: 21px; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.attack-status-card .big-state.on { color: var(--danger); }
+.attack-status-card .big-state.off { color: var(--text-dim); }
+.form-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.form-row label { font-size: 12.5px; color: var(--text-dim); }
+.form-row input[type="number"] {
+  width: 90px; background: var(--l2); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 6px 8px; font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+
+/* Инпуты по всей панели — единая фокус-рамка вместо браузерного дефолта */
+input, select, textarea { font-family: inherit; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input::placeholder { color: var(--text-faint); }
+
+/* Patterns */
+.pattern-list { display: flex; flex-direction: column; gap: 8px; }
+.pattern-row {
+  display: flex; align-items: center; gap: 12px; padding: 11px 15px; background: var(--l1);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  transition: border-color .15s var(--ease);
+}
+.pattern-row:hover { border-color: var(--border-strong); }
+.pattern-row.disabled { opacity: .5; }
+.pattern-name { font-weight: 600; font-size: 13.5px; min-width: 160px; }
+.pattern-meta { color: var(--text-faint); font-size: 11.5px; flex: 1; }
+.pattern-actions { display: flex; gap: 6px; }
+.new-pattern-form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 4px; }
+.new-pattern-form .full { grid-column: 1 / -1; }
+.new-pattern-form label { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--text-faint); margin-bottom: 5px; }
+.new-pattern-form input {
+  width: 100%; background: var(--l2); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12.5px;
+}
+
+/* Stats */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px; }
+.stat-tile {
+  background: var(--l1); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 16px 18px;
+  transition: border-color .15s var(--ease);
+}
+.stat-tile:hover { border-color: var(--border-strong); }
+.stat-tile .stat-value { font-size: 25px; font-weight: 700; font-family: var(--mono); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.stat-tile .stat-label { color: var(--text-faint); font-size: 11.5px; margin-top: 5px; font-weight: 500; }
+.fp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.fp-table th {
+  text-align: left; color: var(--text-faint); font-weight: 700; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .05em; padding: 9px 12px; border-bottom: 1px solid var(--border);
+}
+.fp-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); font-variant-numeric: tabular-nums; }
+.fp-table tr:last-child td { border-bottom: none; }
+.fp-bar-track { background: var(--l2); border-radius: 6px; height: 6px; width: 120px; overflow: hidden; }
+.fp-bar-fill {
+  height: 100%; width: 100%; background: var(--danger); border-radius: 6px;
+  transform-origin: left; transform: scaleX(var(--fill, 0));
+  transition: transform .3s var(--ease);
+}
+
+/* Кнопка FP на сигнале */
+.signal-fp-chip { cursor: pointer; }
+.signal-fp-chip:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+
+/* Settings */
+.token-status-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.token-status-badge {
+  font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: var(--radius-pill);
+}
+.token-status-badge.ok { background: var(--success-soft); color: var(--success); }
+.token-status-badge.missing { background: var(--warning-soft); color: var(--warning); }
+.settings-quick-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 4px; }
+.settings-quick-form label { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--text-faint); margin-bottom: 5px; }
+.settings-quick-form select, .settings-quick-form input {
+  width: 100%; background: var(--l2); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12.5px;
+}
+.yaml-editor {
+  width: 100%; min-height: 420px; background: var(--l0); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); font-family: var(--mono); font-size: 12.5px;
+  padding: 14px; resize: vertical; line-height: 1.6; tab-size: 2;
+}
+.config-error-banner {
+  background: var(--danger-soft); color: var(--danger); border-radius: var(--radius-sm);
+  padding: 9px 13px; font-size: 12.5px; font-weight: 500; margin-top: 10px; display: none;
+}
+.config-error-banner.show { display: block; }
+.restart-notice {
+  background: var(--warning-soft); color: var(--warning); border-radius: var(--radius-sm);
+  padding: 9px 13px; font-size: 12.5px; font-weight: 500; margin-top: 10px; display: none;
+}
+.restart-notice.show { display: block; }
+
+/* Users */
+.users-toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+.users-toolbar input {
+  flex: 1; background: var(--l1); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 9px 13px; font-size: 13px;
+}
+.users-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.users-table th {
+  text-align: left; color: var(--text-faint); font-weight: 700; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .05em; padding: 9px 12px; border-bottom: 1px solid var(--border);
+}
+.users-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.users-table tr:last-child td { border-bottom: none; }
+.users-table tr:hover td { background: var(--l2); }
+.trust-tag {
+  font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--l2); color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.trust-tag.TRUSTED, .trust-tag.PRIVILEGED { background: var(--success-soft); color: var(--success); border-color: transparent; }
+.trust-tag.REGULAR { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.safe-tag { font-size: 10.5px; font-weight: 700; color: var(--success); }
+</style>
+</head>
+<body>
+
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <div class="brand-mark" style="width:44px;height:44px;font-size:18px;margin:0 auto 14px;">М</div>
+    <h2>Вход в панель модерации</h2>
+    <p id="login-message">Доступ только для владельца и модераторов канала — роль определяется автоматически через Twitch.</p>
+    <button class="btn btn-accent" id="btn-login" style="width:100%;margin-top:14px;">Войти через Twitch</button>
+  </div>
+</div>
+
+<div class="app" id="app-root" style="display:none;">
+  <div class="sidebar">
+    <a class="brand" href="/">
+      <div class="brand-mark">М</div>
+      <div class="brand-name">Модерация</div>
+    </a>
+
+    <div class="nav-label">Экраны</div>
+    <div class="nav-item active" data-screen="live" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M3.5 3.5a7 7 0 0 0 0 9M12.5 3.5a7 7 0 0 1 0 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      Live
+    </div>
+    <div class="nav-item" data-screen="users" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5.5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 14c.5-3 2.2-4.5 4.5-4.5s4 1.5 4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10.5 3.2c1.2.3 2 1.3 2 2.6s-.8 2.3-2 2.6M12 9.7c1.7.5 2.7 1.9 3 4.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Users
+    </div>
+    <div class="nav-item" data-screen="audit" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Audit
+    </div>
+    <div class="nav-item" data-screen="patterns" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><path d="M9 4.3h2.7A2.3 2.3 0 0 1 14 6.6V9M7 11.7H4.3A2.3 2.3 0 0 1 2 9.4V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Patterns
+    </div>
+    <div class="nav-item" data-screen="attack" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      Attack Mode
+    </div>
+    <div class="nav-item" data-screen="stats" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M2 13.5h12M4 13.5V8M8 13.5V3.5M12 13.5V6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Stats
+    </div>
+    <div class="nav-item" data-screen="settings" role="button" tabindex="0">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.3 3.7l-1.1 1.1M4.8 11.1l-1.1 1.1M12.3 12.3l-1.1-1.1M4.8 4.9 3.7 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Settings
+    </div>
+
+    <!-- Ссылки на экран ботов здесь раньше не было вовсе: он жил в другом
+         процессе на 8765, со своей сессией, и вести туда из этой вкладки
+         означало отправить человека логиниться заново. Экраны в одном
+         приложении — переход стал обычной внутренней ссылкой.
+         <a>, а не .nav-item: те переключают экран внутри страницы через JS
+         (data-screen), а это полноценная навигация на другой документ. -->
+    <a class="nav-item" href="/bots" style="text-decoration:none;">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="4.5" width="11" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v2.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="8.5" r="1" fill="currentColor"/><circle cx="10" cy="8.5" r="1" fill="currentColor"/></svg>
+      Боты
+    </a>
+
+    <div class="field">
+      <label>Профиль бота</label>
+      <select id="profile-select"></select>
+    </div>
+
+    <div class="field" id="chatbot-status-block">
+      <label>Чат-бот (main.py)</label>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="bot-pulse" id="chatbotPulse"></div>
+        <span id="chatbotStatusText" style="font-size:13px; color:var(--text-dim);">проверка…</span>
+      </div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <button class="btn btn-small" id="btn-chatbot-start">Запустить</button>
+        <button class="btn btn-ghost btn-small" id="btn-chatbot-stop">Остановить</button>
+      </div>
+    </div>
+
+    <div class="user-card" id="user-card">
+      <div class="user-avatar" id="user-avatar">?</div>
+      <div class="user-info">
+        <div class="user-login" id="user-login">—</div>
+        <div class="user-role" id="user-role-badge">—</div>
+      </div>
+      <button class="btn btn-ghost btn-small" id="btn-logout">Выйти</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <h1 id="screen-title">Live — активные кластеры</h1>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="attack-banner" id="attack-banner" style="display:none;">
+          <svg viewBox="0 0 16 16" fill="none" width="13" height="13"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          ATTACK MODE — осталось <span id="attack-remaining">—</span>
+        </div>
+        <div class="conn-pill"><span class="conn-dot off" id="conn-dot"></span><span id="conn-label">подключение…</span></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="screen active" id="screen-live">
+        <div id="cluster-list" class="cluster-list"><div class="empty">Активных кластеров нет — атак не обнаружено</div></div>
+
+        <div class="section-head"><h2>Лента подозрительных сообщений</h2></div>
+        <div class="card" id="verdict-feed"><div class="empty">Пока тихо — подозрительных сообщений не было</div></div>
+      </div>
+
+      <div class="screen" id="screen-users">
+        <div class="users-toolbar">
+          <input id="users-search" placeholder="Поиск по нику…">
+          <button class="btn btn-ghost" id="btn-users-search">Найти</button>
+        </div>
+        <div class="card">
+          <table class="users-table">
+            <thead>
+              <tr><th>Ник</th><th>Сообщений</th><th>Доверие</th><th>Первое сообщение</th><th>Последнее сообщение</th><th>Таймауты</th></tr>
+            </thead>
+            <tbody id="users-body"></tbody>
+          </table>
+          <div class="empty" id="users-empty" style="display:none;">Зрителей пока нет</div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-audit">
+        <div class="card">
+          <table class="audit-table">
+            <thead>
+              <tr><th>Когда</th><th>Кто</th><th>Роль</th><th>Действие</th><th>Область</th><th>Причина</th><th>Итог</th></tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+          <div class="empty" id="audit-empty" style="display:none;">Аудит пуст</div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-patterns">
+        <div class="card" id="patterns-admin-hint" style="display:none;margin-bottom:14px;">
+          <div class="note">Создание и изменение паттернов требует роль ADMIN и выше — вы можете только просматривать список.</div>
+        </div>
+        <div class="pattern-list" id="pattern-list"><div class="empty">Паттернов нет</div></div>
+
+        <div class="card" id="new-pattern-card" style="margin-top:18px;">
+          <div class="card-title">Новый паттерн</div>
+          <div class="new-pattern-form">
+            <div><label>Имя</label><input id="np-name" placeholder="raid_bots_ru"></div>
+            <div><label>Вес (порядок выбора)</label><input id="np-weight" type="number" value="1" step="0.1"></div>
+            <div class="full"><label>Описание</label><input id="np-description" placeholder="Короткое описание паттерна"></div>
+            <div class="full"><label>Требуемые сигналы (через запятую)</label><input id="np-signals" placeholder="exact_duplicate, synchronized_arrival"></div>
+            <div><label>Мин. семейств</label><input id="np-min-families" type="number" value="0"></div>
+            <div><label>Мин. risk_score</label><input id="np-min-risk" type="number" value="0"></div>
+            <div><label>Мин. confidence (0-1)</label><input id="np-min-confidence" type="number" value="0" step="0.05"></div>
+            <div><label>Мин. размер кластера</label><input id="np-min-cluster" type="number" value="0"></div>
+          </div>
+          <button class="btn btn-accent" id="btn-create-pattern" style="margin-top:14px;">Создать паттерн</button>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-attack">
+        <div class="card attack-status-card">
+          <div>
+            <div class="big-state off" id="attack-state-label">ВЫКЛЮЧЕН</div>
+            <div class="cluster-meta" id="attack-state-meta">Обычные пороги детекции</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="form-row" id="attack-duration-row">
+              <label>Длительность (сек)</label>
+              <input type="number" id="attack-duration" value="1800" min="1">
+            </div>
+            <button class="btn btn-danger" id="btn-attack-activate">Включить Attack Mode</button>
+            <button class="btn btn-ghost" id="btn-attack-deactivate" style="display:none;">Выключить</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px;">
+          <div class="note">
+            Attack Mode повышает risk_score для всех сообщений канала (множитель Sensitivity.ATTACK),
+            но не может обойти базовый инвариант: BAN всё равно требует 2+ независимых семейства сигналов.
+            Автоматически выключается по истечении времени. Требует роль ADMIN+.
+          </div>
+        </div>
+
+        <div class="section-head"><h2>Giveaway Mode</h2></div>
+        <div class="card attack-status-card">
+          <div>
+            <div class="big-state off" id="giveaway-state-label">ВЫКЛЮЧЕН</div>
+            <div class="cluster-meta" id="giveaway-state-meta">Обычные пороги детекции</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="form-row" id="giveaway-duration-row">
+              <label>Длительность (сек)</label>
+              <input type="number" id="giveaway-duration" value="900" min="1">
+            </div>
+            <button class="btn btn-accent" id="btn-giveaway-activate">Включить Giveaway Mode</button>
+            <button class="btn btn-ghost" id="btn-giveaway-deactivate" style="display:none;">Выключить</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px;">
+          <div class="note">
+            Giveaway Mode СНИЖАЕТ чувствительность детекции на время розыгрыша: синхронное
+            появление одинаковых коротких сообщений ("!giveaway" от сотни зрителей) технически
+            неотличимо от бот-атаки без этого контекста. Включайте перед стартом розыгрыша,
+            выключается автоматически по истечении времени. Требует роль ADMIN+.
+          </div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-stats">
+        <div class="stats-grid" id="stats-tiles"></div>
+        <div class="section-head"><h2>FP-rate по сигналам</h2></div>
+        <div class="card">
+          <table class="fp-table">
+            <thead>
+              <tr><th>Сигнал</th><th>Всего фидбека</th><th>False positive</th><th>FP-rate</th></tr>
+            </thead>
+            <tbody id="fp-stats-body"></tbody>
+          </table>
+          <div class="empty" id="fp-stats-empty" style="display:none;">Фидбека пока нет</div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-settings">
+        <div class="section-head"><h2>Токен бота (реальные баны/таймауты)</h2></div>
+        <div class="card token-status-row">
+          <div>
+            <span class="token-status-badge missing" id="token-status-badge">не настроен</span>
+            <div class="cluster-meta" id="token-status-meta" style="margin-top:6px;">Executor не сможет выполнять реальные действия, пока токен не получен.</div>
+          </div>
+          <button class="btn btn-accent" id="btn-get-bot-token">Получить токен бота</button>
+        </div>
+
+        <div class="section-head"><h2>Быстрые настройки</h2></div>
+        <div class="card">
+          <div class="settings-quick-form">
+            <div>
+              <label>Режим чувствительности</label>
+              <select id="cfg-mode">
+                <option value="SAFE">SAFE</option>
+                <option value="BALANCED">BALANCED</option>
+                <option value="AGGRESSIVE">AGGRESSIVE</option>
+                <option value="ATTACK">ATTACK</option>
+              </select>
+            </div>
+            <div><label>risk: OBSERVE от</label><input id="cfg-risk-observe" type="number" min="0" max="100"></div>
+            <div><label>risk: TIMEOUT от</label><input id="cfg-risk-timeout" type="number" min="0" max="100"></div>
+            <div><label>risk: BAN от</label><input id="cfg-risk-ban" type="number" min="0" max="100"></div>
+          </div>
+          <div class="note" id="settings-not-loaded" style="display:none;">config/moderation.yml ещё не создан на сервере.</div>
+        </div>
+
+        <div class="section-head"><h2>config/moderation.yml (полный YAML)</h2></div>
+        <div class="card">
+          <textarea class="yaml-editor" id="cfg-yaml-editor" spellcheck="false"></textarea>
+          <div class="config-error-banner" id="cfg-parse-error"></div>
+          <div class="restart-notice" id="cfg-restart-notice">Сохранено. Изменения применятся после перезапуска бота.</div>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="btn btn-accent" id="btn-save-config">Сохранить</button>
+            <button class="btn btn-ghost" id="btn-reload-config">Отменить изменения</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h2 id="modal-title">Подтвердите действие</h2>
+    <p id="modal-body"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modal-cancel">Отмена</button>
+      <button class="btn btn-danger" id="modal-confirm">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<script src="/static/moderation.js"></script>
+</body>
+</html>

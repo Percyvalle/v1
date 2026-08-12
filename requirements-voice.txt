@@ -1,0 +1,19 @@
+# Голосовой ввод — ставится отдельно, потому что тянет ~600 МБ моделей и
+# бинарников, которые не нужны ни модерации, ни панели, ни текстовому чат-боту.
+# Нужен, только если VOICE_ENABLED=true (см. apps/twitch-bots/voice_main.py).
+#
+#   .\.venv\Scripts\pip install -r requirements-voice.txt
+#
+# Импортируется ровно в трёх файлах: bot/audio_source.py, bot/voice.py,
+# bot/voice_queue.py. Без этих пакетов остальной код работает как обычно —
+# voice_main.py просто не запустится.
+-r requirements.txt
+
+sounddevice==0.5.1
+numpy==2.1.3
+faster-whisper==1.0.3
+
+# PyAV — декодирование звуковой дорожки стрима в bot/audio_source.py.
+# Как и streamlink, раньше отсутствовал в requirements.txt при том, что
+# импортировался на уровне модуля.
+av==18.0.0
