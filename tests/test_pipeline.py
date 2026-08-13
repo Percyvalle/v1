@@ -14,6 +14,7 @@ Registry и что сбой одного канала делает с остал
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 from cigilbot import pipeline as pipeline_mod
 from cigilbot.pipeline import ChannelPipeline, ModerationHub
 from cigilbot.registry_store import RegistryStore
+from cigilbot.twitch_api import HelixClient
 from cigilbot.types import RiskLevel
 
 
@@ -400,3 +402,61 @@ class TestHubReconcile:
 
         assert all(p.stopped for p in fake_pipeline.instances)
         assert hub.active_channels == []
+
+
+class TestPollActionQueueUsesOwnBroadcasterId:
+    """BUG-005 аудита: токен модератора один на процесс (User Access Token
+    аккаунта бота, годен для любого канала, где бот реально модератор), но
+    ModTokenState.broadcaster_id — значение, записанное в .env один раз для
+    ОДНОГО канала, выбранного при получении токена. При двух и более
+    каналах под одной панелью second-канал исполнял бы задания с
+    broadcaster_id ПЕРВОГО, если бы ActionExecutor строился по
+    state.broadcaster_id, а не по self.broadcaster_id самого пайплайна —
+    реальный инцидент 2026-08-13: таймаут для paverpapa исполнился на
+    dobriy_yura."""
+
+    async def test_executor_receives_pipeline_broadcaster_id_not_token_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from cigilbot.executor import ActionExecutor
+        from cigilbot.mod_token import ModTokenManager
+
+        pipeline = ChannelPipeline(
+            broadcaster_id="second_channel", channel="beta", mod_db_path=tmp_path / "mod.2.db"
+        )
+
+        fake_manager = object.__new__(ModTokenManager)
+        # Токен получен на "первый_канал" — ровно сценарий бага: один общий
+        # .env, TWITCH_MOD_BROADCASTER_ID записан для другого канала.
+        fake_manager._access_token = "tok"  # noqa: SLF001
+        fake_manager._refresh_token = "refresh"  # noqa: SLF001
+        fake_manager._bot_user_id = "bot_user"  # noqa: SLF001
+        fake_manager._broadcaster_id = "first_channel"  # noqa: SLF001
+        fake_manager._expires_at = time.time() + 3600  # noqa: SLF001
+        pipeline.mod_token_manager = fake_manager
+        pipeline.helix_client = object.__new__(HelixClient)
+
+        captured: dict[str, str] = {}
+
+        class _StopLoop(Exception):
+            pass
+
+        async def fake_process_pending(executor: ActionExecutor, store: object) -> int:
+            captured["broadcaster_id"] = executor._broadcaster_id  # noqa: SLF001
+            return 0
+
+        async def fake_sleep(seconds: float) -> None:
+            # _poll_action_queue ловит все исключения из process_pending
+            # (см. except Exception в самой функции) и продолжает цикл —
+            # единственная точка, откуда можно остановить while True, не
+            # изменяя саму функцию, это asyncio.sleep ПОСЛЕ первой итерации.
+            raise _StopLoop
+
+        monkeypatch.setattr(pipeline_mod, "process_pending", fake_process_pending)
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        with pytest.raises(_StopLoop):
+            await pipeline._poll_action_queue()
+
+        assert captured["broadcaster_id"] == "second_channel"
+        assert captured["broadcaster_id"] != "first_channel"

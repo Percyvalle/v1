@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 import paths
+from cigilbot.alerts import send_digest
 from cigilbot.config import load_channel_profile
 from cigilbot.config import load_config as load_moderation_config
 from cigilbot.engine import ModerationEngine
@@ -64,6 +65,15 @@ ACTION_QUEUE_POLL_SECONDS = 2.0
 FP_PENALTY_SYNC_EVERY_N_TICKS = 10
 ACCOUNT_AGE_POLL_SECONDS = 5.0
 ACCOUNT_AGE_BATCH_SIZE = 100  # лимит get_users() на один Helix-запрос
+
+# Ежедневный digest (направление 01 master-plan.html). Поллер проверяет раз
+# в час, не пора ли слать, вместо одного asyncio.sleep(24 часа) — тот подход
+# не пережил бы рестарт бота корректно (после падения на 23-м часу таймер
+# начал бы отсчёт заново, и день, когда бот перезапускали, никогда не
+# получил бы digest). Час — достаточная точность для "раз в сутки", не
+# нагружает БД (2 SELECT COUNT на тик).
+DIGEST_CHECK_INTERVAL_SECONDS = 60 * 60
+DIGEST_PERIOD_SECONDS = 24 * 60 * 60
 
 # Сколько сообщений одного канала может ждать разбора. Потолок нужен именно
 # потому, что очередь теперь в памяти: без него зависший движок съел бы
@@ -124,6 +134,8 @@ class ChannelPipeline:
         await self.engine.sync_attack_mode()
         await self.engine.sync_giveaway_mode()
         await self.engine.reload_fp_penalties()
+        await self.engine.reload_content_rules()
+        await self.engine.sync_content_settings()
 
         self._setup_twitch_clients()
 
@@ -132,6 +144,7 @@ class ChannelPipeline:
             asyncio.create_task(self._poll_state_sync(), name=f"mod-sync-{self.broadcaster_id}"),
             asyncio.create_task(self._poll_action_queue(), name=f"mod-actions-{self.broadcaster_id}"),
             asyncio.create_task(self._poll_account_age(), name=f"mod-age-{self.broadcaster_id}"),
+            asyncio.create_task(self._poll_digest(), name=f"mod-digest-{self.broadcaster_id}"),
         ]
         log.info(
             "Модерация канала запущена (broadcaster_id=%s, канал=%s, SHADOW)",
@@ -280,6 +293,8 @@ class ChannelPipeline:
                 await self.engine.reload_patterns()
                 await self.engine.sync_attack_mode()
                 await self.engine.sync_giveaway_mode()
+                await self.engine.reload_content_rules()
+                await self.engine.sync_content_settings()
                 if tick % FP_PENALTY_SYNC_EVERY_N_TICKS == 0:
                     await self.engine.reload_fp_penalties()
             except Exception:
@@ -327,7 +342,20 @@ class ChannelPipeline:
         """Исполняет задания, которые панель кладёт в mod_action_queue
         (BAN ALL/TIMEOUT ALL). Пересоздаёт ActionExecutor на каждый цикл со
         свежим access_token — тот сам решает, нужно ли реально идти в Twitch
-        за обновлением."""
+        за обновлением.
+
+        broadcaster_id — self.broadcaster_id ЭТОГО канала, не
+        state.broadcaster_id из общего токена (BUG-005 аудита): токен
+        модератора один на весь процесс (User Access Token аккаунта бота,
+        годен для любого канала, где бот реально модератор — Twitch сам
+        проверяет права по scope, не по значению в .env), но
+        TWITCH_MOD_BROADCASTER_ID записывался туда один раз, для канала,
+        который был выбран при получении токена. При двух и более каналах
+        под одной панелью задания на ВТОРОЙ канал всё равно исполнялись бы
+        с broadcaster_id ПЕРВОГО — таймаут визуально уходил "не туда"
+        (нашёл на реальном инциденте: taймаут для paverpapa исполнился на
+        dobriy_yura, потому что токен получали с dobriy_yura в адресной
+        строке)."""
         if self.mod_token_manager is None or self.helix_client is None:
             return
         while True:
@@ -337,7 +365,7 @@ class ChannelPipeline:
                 executor = ActionExecutor(
                     self.helix_client,
                     self.store,
-                    broadcaster_id=state.broadcaster_id,
+                    broadcaster_id=self.broadcaster_id,
                     moderator_id=state.bot_user_id,
                     user_token=access_token,
                 )
@@ -352,6 +380,34 @@ class ChannelPipeline:
             except Exception:
                 log.exception("Сбой обработки очереди действий модерации")
             await asyncio.sleep(ACTION_QUEUE_POLL_SECONDS)
+
+    async def _poll_digest(self) -> None:
+        """Ежедневная сводка активности в Discord (направление 01
+        master-plan.html). Проверяет раз в час, прошли ли сутки с
+        last_digest_sent_at — см. DIGEST_CHECK_INTERVAL_SECONDS про то,
+        почему не один asyncio.sleep(24 часа)."""
+        while True:
+            try:
+                webhook = await self.store.get_discord_webhook()
+                if webhook is not None and webhook.enabled:
+                    now = time.time()
+                    due = (
+                        webhook.last_digest_sent_at is None
+                        or now - webhook.last_digest_sent_at >= DIGEST_PERIOD_SECONDS
+                    )
+                    if due:
+                        since = webhook.last_digest_sent_at or (now - DIGEST_PERIOD_SECONDS)
+                        stats = await self.store.get_digest_stats(since=since)
+                        moderator_stats = await self.store.get_moderator_activity_stats(since=since)
+                        hours = (now - since) / 3600
+                        await send_digest(
+                            webhook, stats, channel=self.channel, hours=hours,
+                            moderator_stats=moderator_stats,
+                        )
+                        await self.store.mark_digest_sent(sent_at=now)
+            except Exception:
+                log.exception("Сбой ежедневного digest в Discord (канал %s)", self.channel)
+            await asyncio.sleep(DIGEST_CHECK_INTERVAL_SECONDS)
 
 
 class ModerationHub:
