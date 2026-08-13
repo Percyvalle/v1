@@ -31,6 +31,18 @@ log = logging.getLogger("moderation.executor")
 # "мягкая" реакция, а не сразу максимум в 2 недели.
 DEFAULT_TIMEOUT_DURATION_SECONDS = 600
 
+# Прогрессивные таймауты (направление 03 master-plan.html): удвоение за
+# каждый предыдущий таймаут — 1-й 10мин, 2-й 20мин, 3-й 40мин, 4-й 80мин,
+# потолок здесь — лимит самого Twitch на timeout. Считается только когда
+# модератор не указал duration_seconds сам — ручной выбор его не трогает.
+MAX_TIMEOUT_DURATION_SECONDS = 7 * 24 * 3600
+
+
+def escalated_timeout_duration(prior_timeouts: int) -> int:
+    doubled = DEFAULT_TIMEOUT_DURATION_SECONDS * (1 << prior_timeouts)
+    return min(doubled, MAX_TIMEOUT_DURATION_SECONDS)
+
+
 # BUG-003 аудита: задание, застрявшее в status='running' дольше этого —
 # почти наверняка след упавшего/перезапущенного бота, не медленный прогресс.
 # Даже кластер на 200 (MAX_MANUAL_BULK_TARGETS в moderation_api.py) целей
@@ -108,7 +120,9 @@ def parse_payload(raw: dict[str, Any]) -> ActionRequest:
         action=action,
         target_user_ids=tuple(target_user_ids),
         reason=str(raw.get("reason", "")),
-        duration_seconds=duration_raw if duration_raw is not None else DEFAULT_TIMEOUT_DURATION_SECONDS,
+        # duration_raw as-is, не с дефолтом: None здесь — сигнал execute()
+        # считать прогрессивную длительность (см. escalated_timeout_duration).
+        duration_seconds=duration_raw,
         cluster_id=cluster_id_raw,
         message_ids=tuple(message_ids),
     )
@@ -146,6 +160,34 @@ class ActionExecutor:
         self._moderator_id = moderator_id
         self._user_token = user_token
 
+    async def _timeout_one(
+        self, user_id: str, *, duration_seconds: int | None, reason: str
+    ) -> ActionResult:
+        """Один TIMEOUT-запрос с прогрессивной длительностью (направление 03
+        master-plan.html). Явный duration_seconds от модератора идёт как
+        есть. Без него — читаем prior_timeouts до вызова Helix, чтобы
+        участники одного batch не видели чужой инкремент, и увеличиваем
+        счётчик только при успехе: неудавшийся таймаут не эскалирует
+        следующий."""
+        if duration_seconds is not None:
+            duration = duration_seconds
+        else:
+            state = await self._store.get_user_state(user_id)
+            prior = state.prior_timeouts if state is not None else 0
+            duration = escalated_timeout_duration(prior)
+
+        result = await self._helix.timeout_user(
+            broadcaster_id=self._broadcaster_id,
+            moderator_id=self._moderator_id,
+            user_id=user_id,
+            duration=duration,
+            reason=reason,
+            user_token=self._user_token,
+        )
+        if duration_seconds is None and result.success:
+            await self._store.increment_prior_timeouts(user_id)
+        return result
+
     async def execute(
         self,
         request: ActionRequest,
@@ -167,15 +209,9 @@ class ActionExecutor:
                 user_token=self._user_token,
             )
         elif request.action == QueueAction.TIMEOUT:
-            duration = request.duration_seconds or DEFAULT_TIMEOUT_DURATION_SECONDS
             target_ids = request.target_user_ids
-            call = lambda uid: self._helix.timeout_user(  # noqa: E731
-                broadcaster_id=self._broadcaster_id,
-                moderator_id=self._moderator_id,
-                user_id=uid,
-                duration=duration,
-                reason=request.reason,
-                user_token=self._user_token,
+            call = lambda uid: self._timeout_one(  # noqa: E731
+                uid, duration_seconds=request.duration_seconds, reason=request.reason
             )
         else:
             target_ids = request.message_ids

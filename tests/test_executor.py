@@ -14,6 +14,8 @@ import httpx
 import pytest
 
 from cigilbot.executor import (
+    DEFAULT_TIMEOUT_DURATION_SECONDS,
+    MAX_TIMEOUT_DURATION_SECONDS,
     ActionExecutor,
     QueueAction,
     parse_payload,
@@ -21,6 +23,7 @@ from cigilbot.executor import (
 )
 from cigilbot.store import ModerationStore
 from cigilbot.twitch_api import HelixClient
+from tests.conftest import EventFactory
 
 
 @pytest.fixture
@@ -58,9 +61,12 @@ class TestParsePayload:
         )
         assert req.duration_seconds == 300
 
-    def test_timeout_without_duration_gets_default(self) -> None:
+    def test_timeout_without_duration_stays_none(self) -> None:
+        # None (не 600) — сигнал execute() посчитать прогрессивную
+        # длительность по prior_timeouts (см. executor.py::_timeout_one),
+        # дефолт больше не подставляется на уровне парсинга payload'а.
         req = parse_payload({"action": "TIMEOUT", "target_user_ids": ["1"], "reason": "x"})
-        assert req.duration_seconds == 600
+        assert req.duration_seconds is None
 
     def test_valid_delete_messages_payload(self) -> None:
         req = parse_payload({"action": "DELETE_MESSAGES", "message_ids": ["m1", "m2"]})
@@ -191,6 +197,130 @@ class TestActionExecutorTimeout:
         await executor.execute(request, actor="mod1", actor_role="MODERATOR")
 
         assert captured["duration"] == 900
+        await helix.close()
+
+    async def test_explicit_duration_does_not_increment_prior_timeouts(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+        helix = make_helix(ban_ok_handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload(
+            {"action": "TIMEOUT", "target_user_ids": ["1"], "duration_seconds": 900, "reason": "x"}
+        )
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        state = await store.get_user_state("1")
+        assert state is not None
+        assert state.prior_timeouts == 0
+        await helix.close()
+
+    async def test_no_duration_uses_default_for_first_timeout(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            captured["duration"] = body["data"].get("duration")
+            return httpx.Response(200, json={"data": [{"user_id": body["data"]["user_id"]}]})
+
+        helix = make_helix(handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload({"action": "TIMEOUT", "target_user_ids": ["1"], "reason": "x"})
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        assert captured["duration"] == DEFAULT_TIMEOUT_DURATION_SECONDS
+        state = await store.get_user_state("1")
+        assert state is not None
+        assert state.prior_timeouts == 1
+        await helix.close()
+
+    async def test_no_duration_escalates_per_user_prior_timeouts(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        # "1" уже получал таймаут дважды, "2" — новичок в одном и том же
+        # batch-запросе: длительность считается по каждому отдельно, а не
+        # одним числом на весь кластер.
+        await store.upsert_user(event_factory(user_id="1"))
+        await store.increment_prior_timeouts("1")
+        await store.increment_prior_timeouts("1")
+        await store.upsert_user(event_factory(user_id="2"))
+
+        durations = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            uid = body["data"]["user_id"]
+            durations[uid] = body["data"].get("duration")
+            return httpx.Response(200, json={"data": [{"user_id": uid}]})
+
+        helix = make_helix(handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload(
+            {"action": "TIMEOUT", "target_user_ids": ["1", "2"], "reason": "x"}
+        )
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        assert durations["1"] == DEFAULT_TIMEOUT_DURATION_SECONDS * 4  # 2^2
+        assert durations["2"] == DEFAULT_TIMEOUT_DURATION_SECONDS  # 2^0
+
+        state1 = await store.get_user_state("1")
+        state2 = await store.get_user_state("2")
+        assert state1 is not None and state1.prior_timeouts == 3
+        assert state2 is not None and state2.prior_timeouts == 1
+        await helix.close()
+
+    async def test_escalation_caps_at_max_duration(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+        for _ in range(10):
+            await store.increment_prior_timeouts("1")
+
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            captured["duration"] = body["data"].get("duration")
+            return httpx.Response(200, json={"data": [{"user_id": body["data"]["user_id"]}]})
+
+        helix = make_helix(handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload({"action": "TIMEOUT", "target_user_ids": ["1"], "reason": "x"})
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        assert captured["duration"] == MAX_TIMEOUT_DURATION_SECONDS
+        await helix.close()
+
+    async def test_failed_timeout_does_not_increment_prior_timeouts(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+        helix = make_helix(lambda request: httpx.Response(400, text="user is a moderator"))
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload({"action": "TIMEOUT", "target_user_ids": ["1"], "reason": "x"})
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        state = await store.get_user_state("1")
+        assert state is not None
+        assert state.prior_timeouts == 0
         await helix.close()
 
 

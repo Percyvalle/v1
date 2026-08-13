@@ -298,6 +298,23 @@ class ModerationStore:
         )
         await self._db.commit()
 
+    async def increment_prior_timeouts(self, user_id: str) -> int:
+        """Увеличить mod_users.prior_timeouts и вернуть новое значение.
+        Вызывается executor.py после успешного Helix-запроса, не раньше —
+        неудавшийся таймаут не должен эскалировать следующий. Поле в схеме
+        с самого начала (migrations.py), но без писателя нигде в коде до
+        направления 03 master-plan.html ("Прогрессивные таймауты")."""
+        await self._db.execute(
+            "UPDATE mod_users SET prior_timeouts = prior_timeouts + 1 WHERE user_id = ?",
+            (user_id,),
+        )
+        await self._db.commit()
+        cursor = await self._db.execute(
+            "SELECT prior_timeouts FROM mod_users WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
     async def get_user_state(self, user_id: str) -> UserState | None:
         self._db.row_factory = aiosqlite.Row
         cursor = await self._db.execute("SELECT * FROM mod_users WHERE user_id = ?", (user_id,))

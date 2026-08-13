@@ -82,6 +82,31 @@ class TestUpsertUser:
         assert state.prior_timeouts == 0
 
 
+class TestIncrementPriorTimeouts:
+    async def test_increments_from_zero(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+
+        new_value = await store.increment_prior_timeouts("1")
+
+        assert new_value == 1
+        state = await store.get_user_state("1")
+        assert state is not None
+        assert state.prior_timeouts == 1
+
+    async def test_accumulates_across_calls(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1"))
+
+        await store.increment_prior_timeouts("1")
+        await store.increment_prior_timeouts("1")
+        third = await store.increment_prior_timeouts("1")
+
+        assert third == 3
+
+
 class TestListUsers:
     async def test_empty_by_default(self, store: ModerationStore) -> None:
         assert await store.list_users() == []
