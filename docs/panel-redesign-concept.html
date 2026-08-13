@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Панель модерации — макет с несколькими каналами</title>
+<style>
+@font-face {
+  font-family: 'Fira Sans UI';
+  src: local('Fira Sans');
+  font-weight: 300 700;
+}
+
+:root {
+  --bg: #F4F5F8;
+  --surface: #FFFFFF;
+  --surface-2: #ECEEF3;
+  --surface-3: #E2E5ED;
+  --border: #D8DCE6;
+  --border-soft: #E5E8EF;
+  --text: #171922;
+  --text-dim: #5B6274;
+  --text-faint: #8A90A3;
+  --accent: #3E5FE0;
+  --accent-soft: #3E5FE014;
+  --accent-text: #3E5FE0;
+  --accent-ink: #FFFFFF;
+
+  --ok: #1C9A63;
+  --ok-soft: #1C9A6314;
+  --warn: #B8791A;
+  --warn-soft: #B8791A14;
+  --crit: #D33A56;
+  --crit-soft: #D33A5614;
+  --info: #2E6FE0;
+  --info-soft: #2E6FE014;
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  --shadow-card: 0 1px 2px rgba(23,25,34,.04), 0 8px 20px -12px rgba(23,25,34,.10);
+  --shadow-pop: 0 20px 60px -16px rgba(23,25,34,.28);
+
+  --mono: 'Fira Code', ui-monospace, 'SF Mono', Consolas, monospace;
+  --sans: 'Fira Sans UI', 'Fira Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B0C10;
+    --surface: #14161C;
+    --surface-2: #1B1E27;
+    --surface-3: #22252F;
+    --border: #262A35;
+    --border-soft: #1D2029;
+    --text: #E8E9EE;
+    --text-dim: #9096A8;
+    --text-faint: #5C6275;
+    --accent: #6C87FF;
+    --accent-soft: #6C87FF1E;
+    --accent-text: #8FA3FF;
+    --accent-ink: #0B0C10;
+
+    --ok: #3ECB8E;
+    --ok-soft: #3ECB8E1C;
+    --warn: #E0A73E;
+    --warn-soft: #E0A73E1C;
+    --crit: #F0546B;
+    --crit-soft: #F0546B1E;
+    --info: #6C9BFF;
+    --info-soft: #6C9BFF1C;
+
+    --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -10px rgba(0,0,0,.55);
+    --shadow-pop: 0 24px 70px -14px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0B0C10;
+  --surface: #14161C;
+  --surface-2: #1B1E27;
+  --surface-3: #22252F;
+  --border: #262A35;
+  --border-soft: #1D2029;
+  --text: #E8E9EE;
+  --text-dim: #9096A8;
+  --text-faint: #5C6275;
+  --accent: #6C87FF;
+  --accent-soft: #6C87FF1E;
+  --accent-text: #8FA3FF;
+  --accent-ink: #0B0C10;
+
+  --ok: #3ECB8E;
+  --ok-soft: #3ECB8E1C;
+  --warn: #E0A73E;
+  --warn-soft: #E0A73E1C;
+  --crit: #F0546B;
+  --crit-soft: #F0546B1E;
+  --info: #6C9BFF;
+  --info-soft: #6C9BFF1C;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -10px rgba(0,0,0,.55);
+  --shadow-pop: 0 24px 70px -14px rgba(0,0,0,.7);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.tabular { font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+/* ---------- intro banner (объяснение концепта, не часть самой панели) ---------- */
+.concept-banner {
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border-bottom: 1px solid var(--border);
+  padding: 14px 28px;
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+.concept-banner .tag {
+  font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .04em;
+  color: var(--accent-text); background: var(--accent-soft); padding: 3px 8px; border-radius: 6px;
+  text-transform: uppercase;
+}
+.concept-banner p { margin: 0; color: var(--text-dim); font-size: 13px; }
+.concept-banner b { color: var(--text); font-weight: 600; }
+
+/* ---------- app shell ---------- */
+.app { display: flex; min-height: calc(100vh - 49px); }
+
+/* channel rail — того, что сегодня нет вообще: Registry уже хранит N
+   каналов (Phase 1 закрыта), но интерфейс всё ещё думает про один */
+.rail {
+  width: 68px; flex: none; background: var(--surface); border-right: 1px solid var(--border-soft);
+  display: flex; flex-direction: column; align-items: center; padding: 16px 0; gap: 6px;
+}
+.rail-home {
+  width: 40px; height: 40px; border-radius: 11px; background: var(--accent); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  margin-bottom: 10px; cursor: pointer;
+}
+.rail-divider { width: 32px; height: 1px; background: var(--border); margin: 6px 0 10px; }
+.rail-ch {
+  width: 42px; height: 42px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border-soft);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: var(--text-dim);
+  cursor: pointer; position: relative; transition: border-color .15s, color .15s;
+}
+.rail-ch:hover { border-color: var(--border); color: var(--text); }
+.rail-ch.active { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent); }
+.rail-ch .dot {
+  position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--surface); background: var(--text-faint);
+}
+.rail-ch .dot.live { background: var(--ok); }
+.rail-ch .dot.alert { background: var(--crit); }
+.rail-add {
+  width: 42px; height: 42px; border-radius: 11px; border: 1px dashed var(--border); color: var(--text-faint);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; margin-top: 4px;
+}
+
+/* screen sidebar — сгруппирован по Phase 7 master-plan.html (Live /
+   Analytics / Users / Automation / Settings / Audit), не плоский список */
+.sidebar {
+  width: 236px; flex: none; background: var(--surface); border-right: 1px solid var(--border-soft);
+  padding: 20px 14px; display: flex; flex-direction: column; overflow-y: auto;
+}
+.sb-channel { padding: 0 8px 16px; border-bottom: 1px solid var(--border-soft); margin-bottom: 14px; }
+.sb-channel .name { font-weight: 700; font-size: 15px; }
+.sb-channel .meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+.sb-channel .meta .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+
+.nav-group { margin-bottom: 4px; }
+.nav-group-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-faint); padding: 14px 10px 6px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm);
+  color: var(--text-dim); font-size: 13.5px; font-weight: 500; cursor: pointer; transition: background .12s, color .12s;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent-text); }
+.nav-icon { width: 16px; height: 16px; flex: none; }
+.nav-item .badge {
+  margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  background: var(--crit-soft); color: var(--crit); padding: 1px 6px; border-radius: 999px;
+}
+
+.sb-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.user-card { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: var(--radius-sm); }
+.user-avatar {
+  width: 30px; height: 30px; border-radius: 8px; background: var(--surface-3); color: var(--text-dim);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex: none;
+}
+.user-login { font-size: 12.5px; font-weight: 600; }
+.user-role { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+
+/* ---------- main ---------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  height: 60px; flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 26px; border-bottom: 1px solid var(--border-soft); background: var(--surface);
+}
+.topbar h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.conn-pill {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim);
+  background: var(--surface-2); border: 1px solid var(--border-soft); padding: 5px 10px 5px 8px; border-radius: 999px;
+}
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+
+.content { flex: 1; overflow-y: auto; padding: 24px 26px 60px; }
+.content-inner { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card); padding: 18px;
+}
+.card-title { font-size: 13px; font-weight: 700; margin: 0 0 12px; display: flex; align-items: center; justify-content: space-between; }
+.card-title .hint { font-size: 11.5px; font-weight: 500; color: var(--text-faint); }
+
+/* ---------- Operator Home (направление 06 "Operator Home → Channel Workspace") ---------- */
+.home-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.ch-card {
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg);
+  padding: 16px; box-shadow: var(--shadow-card); cursor: pointer; transition: border-color .15s, transform .15s;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.ch-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.ch-card-head { display: flex; align-items: center; justify-content: space-between; }
+.ch-card-title { display: flex; align-items: center; gap: 9px; }
+.ch-avatar { width: 34px; height: 34px; border-radius: 9px; background: var(--surface-3); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: var(--text-dim); }
+.ch-name { font-weight: 700; font-size: 14px; }
+.ch-sub { font-size: 11.5px; color: var(--text-faint); }
+.status-pill { font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
+.status-pill.live { background: var(--ok-soft); color: var(--ok); }
+.status-pill.offline { background: var(--surface-2); color: var(--text-faint); }
+.status-pill.attack { background: var(--crit-soft); color: var(--crit); }
+.ch-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ch-metric { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.ch-metric .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.ch-metric .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .03em; margin-top: 1px; }
+.ch-metric.crit .v { color: var(--crit); }
+.ch-alert-strip {
+  display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--crit);
+  background: var(--crit-soft); border-radius: var(--radius-sm); padding: 6px 9px;
+}
+
+/* KPI row */
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.kpi { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-card); }
+.kpi .l { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+.kpi .v { font-family: var(--mono); font-size: 26px; font-weight: 600; margin-top: 4px; }
+.kpi .trend { font-size: 11.5px; margin-top: 5px; display: flex; align-items: center; gap: 4px; }
+.trend.up { color: var(--ok); }
+.trend.down { color: var(--crit); }
+.sparkline { margin-top: 10px; }
+
+/* ---------- Alerts (направление 01 Phase 2) ---------- */
+.alert-row {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft); background: var(--surface);
+}
+.alert-row + .alert-row { margin-top: 8px; }
+.alert-icon {
+  width: 30px; height: 30px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center;
+}
+.alert-icon.crit { background: var(--crit-soft); color: var(--crit); }
+.alert-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.alert-icon.info { background: var(--info-soft); color: var(--info); }
+.alert-body { flex: 1; min-width: 0; }
+.alert-title { font-size: 13px; font-weight: 600; }
+.alert-meta { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.alert-meta .sep { margin: 0 5px; }
+.alert-actions { display: flex; gap: 6px; flex: none; }
+
+/* Discord webhook config preview */
+.webhook-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border-soft); }
+.webhook-row code { font-family: var(--mono); font-size: 12px; color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webhook-status { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ok); font-weight: 600; }
+
+/* live cluster feed */
+.cluster {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 13px 14px; background: var(--surface);
+  display: flex; align-items: center; gap: 14px;
+}
+.cluster + .cluster { margin-top: 8px; }
+.cluster-sev { width: 4px; align-self: stretch; border-radius: 4px; background: var(--crit); flex: none; }
+.cluster-sev.med { background: var(--warn); }
+.cluster-main { flex: 1; min-width: 0; }
+.cluster-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.cluster-signals { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+.sig-chip { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border-soft); }
+.cluster-count { font-family: var(--mono); font-size: 20px; font-weight: 700; text-align: center; min-width: 50px; }
+.cluster-count .l { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; color: var(--text-faint); font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+td { padding: 10px 10px; border-bottom: 1px solid var(--border-soft); }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--surface-2); }
+.trust-tag { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border-soft); }
+.trust-tag.regular { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.trust-tag.trusted { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+.btn {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.ghost { background: transparent; }
+.btn.sm { padding: 5px 10px; font-size: 11.5px; }
+
+.two-col { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 980px) { .two-col { grid-template-columns: 1fr; } .home-grid { grid-template-columns: 1fr; } .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+
+.note { font-size: 12px; color: var(--text-dim); background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; line-height: 1.55; }
+</style>
+</head>
+<body>
+
+<div class="concept-banner">
+  <span class="tag">Design concept</span>
+  <p>Макет второй панели: два канала на одном экране, вместо переключения выпадашкой. Основано на <b>docs/master-plan.html</b>. Живая панель на 8766 не тронута.</p>
+</div>
+
+<div class="app">
+  <!-- channel rail: сегодня переключение канала — выпадашка внизу сайдбара под
+       общим списком вкладок. Registry уже хранит N каналов (Phase 1 закрыта),
+       но интерфейс всё ещё думает про один. Rail делает multi-channel видимым
+       на каждом экране, не только на Home. -->
+  <div class="rail">
+    <div class="rail-home" title="Все каналы">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M2 7.5 8 2l6 5.5M4 6.5V13.5a1 1 0 0 0 1 1h2.5V10.5h1V14.5H11a1 1 0 0 0 1-1V6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="rail-divider"></div>
+    <div class="rail-ch active" title="dobriy_yura">DY<span class="dot live"></span></div>
+    <div class="rail-ch" title="paverpapa — активный кластер">PP<span class="dot alert"></span></div>
+    <div class="rail-add" title="Добавить канал">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sb-channel">
+      <div class="name">dobriy_yura</div>
+      <div class="meta"><span class="live-dot"></span> В эфире · 34 зрителя</div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Live</div>
+      <div class="nav-item active">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M3.5 3.5a7 7 0 0 0 0 9M12.5 3.5a7 7 0 0 1 0 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Кластеры и лента
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 14 6v4l-6 4.2L2 10V6l6-4.2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        Alerts <span class="badge">2</span>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Analytics</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M2 13.5h12M4 13.5V8M8 13.5V3.5M12 13.5V6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Сколько ловим
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Audit
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Users</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5.5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 14c.5-3 2.2-4.5 4.5-4.5s4 1.5 4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10.5 3.2c1.2.3 2 1.3 2 2.6s-.8 2.3-2 2.6M12 9.7c1.7.5 2.7 1.9 3 4.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Все пользователи
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Automation</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><path d="M9 4.3h2.7A2.3 2.3 0 0 1 14 6.6V9M7 11.7H4.3A2.3 2.3 0 0 1 2 9.4V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Patterns
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Attack / Giveaway
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Settings</div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.3 3.7l-1.1 1.1M4.8 11.1l-1.1 1.1M12.3 12.3l-1.1-1.1M4.8 4.9 3.7 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Канал и токен
+      </div>
+    </div>
+
+    <div class="sb-footer">
+      <div class="user-card">
+        <div class="user-avatar">DO</div>
+        <div>
+          <div class="user-login">dobriy_yura</div>
+          <div class="user-role">Owner</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <h1>Каналы</h1>
+      <div class="topbar-actions">
+        <div class="conn-pill"><span class="conn-dot"></span> подключено</div>
+        <button class="btn primary sm">Добавить канал</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="content-inner">
+
+        <!-- KPI row: сводка across каналов — Chat Health / Moderation
+             Effectiveness ("Направление 02") пока не построены, но их
+             форма уже понятна: тренд + спарклайн, не голое число -->
+        <div class="kpi-row">
+          <div class="kpi">
+            <div class="l">Каналов подключено</div>
+            <div class="v tabular">2</div>
+            <div class="trend up">оба активны</div>
+          </div>
+          <div class="kpi">
+            <div class="l">Кластеров за 24ч</div>
+            <div class="v tabular">7</div>
+            <div class="trend down">−3 к вчера</div>
+          </div>
+          <div class="kpi">
+            <div class="l">FP-rate (7д)</div>
+            <div class="v tabular">4.1%</div>
+            <div class="trend up">−0.6 п.п.</div>
+          </div>
+          <div class="kpi">
+            <div class="l">Сообщений/мин</div>
+            <div class="v tabular">18.3</div>
+            <div class="trend up">чат живой</div>
+          </div>
+        </div>
+
+        <!-- Channel Workspace grid — "Operator Home → Channel Workspace",
+             направление 06 master-plan.html: статус, последний алерт,
+             мини-метрики, клик открывает канал в существующем интерфейсе -->
+        <div class="card" style="box-shadow:none;border:none;background:transparent;padding:0;">
+          <div class="home-grid">
+            <div class="ch-card">
+              <div class="ch-card-head">
+                <div class="ch-card-title">
+                  <div class="ch-avatar">DY</div>
+                  <div>
+                    <div class="ch-name">dobriy_yura</div>
+                    <div class="ch-sub">168599565</div>
+                  </div>
+                </div>
+                <span class="status-pill live">Live</span>
+              </div>
+              <div class="ch-metrics">
+                <div class="ch-metric"><div class="v tabular">34</div><div class="l">Зрителей</div></div>
+                <div class="ch-metric"><div class="v tabular">0</div><div class="l">Кластеров</div></div>
+                <div class="ch-metric"><div class="v tabular">99.2%</div><div class="l">На связи</div></div>
+              </div>
+            </div>
+
+            <div class="ch-card">
+              <div class="ch-card-head">
+                <div class="ch-card-title">
+                  <div class="ch-avatar">PP</div>
+                  <div>
+                    <div class="ch-name">paverpapa</div>
+                    <div class="ch-sub">96757582</div>
+                  </div>
+                </div>
+                <span class="status-pill attack">Атака</span>
+              </div>
+              <div class="ch-metrics">
+                <div class="ch-metric"><div class="v tabular">736</div><div class="l">Зрителей</div></div>
+                <div class="ch-metric crit"><div class="v tabular">1</div><div class="l">Кластер</div></div>
+                <div class="ch-metric"><div class="v tabular">SHADOW</div><div class="l">Режим</div></div>
+              </div>
+              <div class="ch-alert-strip">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                12 ботов · exact_duplicate + synchronized_arrival · 2 мин назад
+              </div>
+            </div>
+
+            <div class="ch-card" style="align-items:center;justify-content:center;color:var(--text-faint);border-style:dashed;">
+              <div style="text-align:center;">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="margin-bottom:6px;"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <div style="font-size:12.5px;">Подключить канал</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <!-- Global Alerts Feed — "та же лента, что уходит в Discord,
+               дублируется внутри Operator Home с deep-link" -->
+          <div class="card">
+            <div class="card-title">Что произошло</div>
+
+            <div class="alert-row">
+              <div class="alert-icon crit">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              </div>
+              <div class="alert-body">
+                <div class="alert-title">paverpapa: 12 ботов зашли одновременно</div>
+                <div class="alert-meta">exact_duplicate · synchronized_arrival<span class="sep">·</span>2 мин назад</div>
+              </div>
+              <div class="alert-actions"><button class="btn sm primary">Открыть</button></div>
+            </div>
+
+            <div class="alert-row">
+              <div class="alert-icon warn">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v3.5M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              </div>
+              <div class="alert-body">
+                <div class="alert-title">paverpapa: третья атака за час</div>
+                <div class="alert-meta">Обычные пороги не справляются, стоит проверить вручную<span class="sep">·</span>18 мин назад</div>
+              </div>
+              <div class="alert-actions"><button class="btn sm">Открыть</button></div>
+            </div>
+
+            <div class="alert-row">
+              <div class="alert-icon info">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M3 8l3.5-3.5M3 8l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="alert-body">
+                <div class="alert-title">Утренняя сводка ушла в Discord</div>
+                <div class="alert-meta">Оба бота живы · 2 канала под защитой<span class="sep">·</span>09:00</div>
+              </div>
+              <div class="alert-actions"><button class="btn sm ghost">Discord</button></div>
+            </div>
+          </div>
+
+          <!-- Discord webhook — "Направление 01", настраивается для каждого канала отдельно -->
+          <div class="card">
+            <div class="card-title">Уведомления в Discord</div>
+            <div class="webhook-row" style="margin-bottom:10px;">
+              <code>discord.com/api/webhooks/••••••••/••••••</code>
+              <span class="webhook-status">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                подключено
+              </span>
+            </div>
+            <div class="note">
+              Пишем сюда только при новой атаке — не на каждое подозрительное сообщение.
+              У paverpapa свой канал в Discord, у dobriy_yura свой, они не пересекаются.
+            </div>
+          </div>
+        </div>
+
+        <!-- Live cluster feed — существующий экран, тот же паттерн данных -->
+        <div class="card">
+          <div class="card-title">Активные кластеры — paverpapa</div>
+          <div class="cluster">
+            <div class="cluster-sev"></div>
+            <div class="cluster-main">
+              <div class="cluster-title">12 участников · risk 91</div>
+              <div class="cluster-signals">
+                <span class="sig-chip">exact_duplicate</span>
+                <span class="sig-chip">synchronized_arrival</span>
+                <span class="sig-chip">new_accounts</span>
+              </div>
+            </div>
+            <div class="cluster-count tabular">91<div class="l">risk</div></div>
+            <button class="btn sm">Детали</button>
+          </div>
+        </div>
+
+        <!-- Users table — плотная, для сканирования, не для чтения -->
+        <div class="card">
+          <div class="card-title">Пользователи — dobriy_yura</div>
+          <table>
+            <thead><tr><th>Ник</th><th>Сообщений</th><th>Доверие</th><th>Последнее</th><th>Таймауты</th></tr></thead>
+            <tbody>
+              <tr><td>luvuvuvv</td><td class="tabular">1204</td><td><span class="trust-tag trusted">TRUSTED</span></td><td class="tabular">2 мин назад</td><td class="tabular">0</td></tr>
+              <tr><td>houston_ksenia</td><td class="tabular">318</td><td><span class="trust-tag regular">REGULAR</span></td><td class="tabular">14 мин назад</td><td class="tabular">0</td></tr>
+              <tr><td>alandalone</td><td class="tabular">92</td><td><span class="trust-tag">—</span></td><td class="tabular">1 ч назад</td><td class="tabular">1</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
