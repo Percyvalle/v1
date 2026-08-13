@@ -1,0 +1,682 @@
+<title>CigilBot Roadmap v2</title>
+<style>
+@font-face {
+  font-family: 'Fraktion Sans';
+  src: local('Inter'), local('Segoe UI');
+  font-weight: 400 800;
+}
+
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --surface-2: #edeae1;
+  --border: #ddd7c8;
+  --border-strong: #c7bfa8;
+  --text: #23201a;
+  --text-dim: #5c5644;
+  --text-faint: #918a72;
+
+  --accent: #8a5a2b;
+  --accent-soft: #8a5a2b14;
+  --accent-text: #6e4720;
+
+  --ok: #3d7a4f;
+  --ok-soft: #3d7a4f14;
+  --warn: #a3701f;
+  --warn-soft: #a3701f14;
+  --crit: #a13a3a;
+  --crit-soft: #a13a3a14;
+  --info: #3d6a8a;
+  --info-soft: #3d6a8a14;
+  --future: #6f6690;
+  --future-soft: #6f669014;
+
+  --mono: 'Fira Code', ui-monospace, 'SF Mono', Consolas, monospace;
+  --sans: 'Fraktion Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+
+  --shadow: 0 1px 2px rgba(35,32,26,.05), 0 6px 20px -8px rgba(35,32,26,.10);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17150f;
+    --surface: #1f1c15;
+    --surface-2: #262218;
+    --border: #38321f;
+    --border-strong: #4a4327;
+    --text: #ede8db;
+    --text-dim: #b3ab90;
+    --text-faint: #7c765f;
+
+    --accent: #d29a5a;
+    --accent-soft: #d29a5a1e;
+    --accent-text: #e0b47e;
+
+    --ok: #6fbf85;
+    --ok-soft: #6fbf851c;
+    --warn: #d9a94b;
+    --warn-soft: #d9a94b1c;
+    --crit: #e2726c;
+    --crit-soft: #e2726c1e;
+    --info: #7fb0d9;
+    --info-soft: #7fb0d91c;
+    --future: #a79bd9;
+    --future-soft: #a79bd91c;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px -10px rgba(0,0,0,.6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17150f;
+  --surface: #1f1c15;
+  --surface-2: #262218;
+  --border: #38321f;
+  --border-strong: #4a4327;
+  --text: #ede8db;
+  --text-dim: #b3ab90;
+  --text-faint: #7c765f;
+
+  --accent: #d29a5a;
+  --accent-soft: #d29a5a1e;
+  --accent-text: #e0b47e;
+
+  --ok: #6fbf85;
+  --ok-soft: #6fbf851c;
+  --warn: #d9a94b;
+  --warn-soft: #d9a94b1c;
+  --crit: #e2726c;
+  --crit-soft: #e2726c1e;
+  --info: #7fb0d9;
+  --info-soft: #7fb0d91c;
+  --future: #a79bd9;
+  --future-soft: #a79bd91c;
+
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px -10px rgba(0,0,0,.6);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--sans);
+  font-size: 15.5px; line-height: 1.6; margin: 0; -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 56px 32px 120px; }
+
+.masthead { margin-bottom: 8px; }
+.kicker {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent-text); margin-bottom: 10px; font-weight: 600;
+}
+h1 { font-size: 34px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 10px; text-wrap: balance; }
+.lede { font-size: 16.5px; color: var(--text-dim); max-width: 620px; margin: 0 0 6px; }
+.meta-row { display: flex; gap: 18px; margin-top: 20px; font-size: 12.5px; color: var(--text-faint); font-family: var(--mono); }
+
+nav.toc {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 32px 0 48px; padding: 16px 18px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+}
+nav.toc a { color: var(--text-dim); text-decoration: none; font-size: 13px; }
+nav.toc a:hover { color: var(--accent-text); }
+nav.toc .sep { color: var(--border-strong); }
+
+section { margin-bottom: 60px; scroll-margin-top: 20px; }
+.section-eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 6px;
+}
+h2 { font-size: 23px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 8px; }
+.section-desc { color: var(--text-dim); max-width: 680px; margin: 0 0 26px; font-size: 14.5px; }
+
+/* -------- idea cards (анализ 10 идей) -------- */
+.idea {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.idea-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.idea-title { font-size: 16.5px; font-weight: 700; margin: 0; }
+.idea-tags { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; justify-content: flex-end; }
+.tag {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  white-space: nowrap; letter-spacing: .01em;
+}
+.tag.phase { background: var(--accent-soft); color: var(--accent-text); }
+.tag.now { background: var(--ok-soft); color: var(--ok); }
+.tag.later { background: var(--warn-soft); color: var(--warn); }
+.tag.blocked { background: var(--crit-soft); color: var(--crit); }
+
+.idea-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 20px; margin-bottom: 14px; }
+.idea-field .l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-bottom: 3px; font-weight: 600; }
+.idea-field .v { font-size: 13.5px; color: var(--text); line-height: 1.5; }
+.idea-field.full { grid-column: 1 / -1; }
+.complexity-dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 6px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong); }
+.dot.on { background: var(--accent); }
+
+.idea-ux {
+  background: var(--surface-2); border-radius: 8px; padding: 10px 13px; font-size: 13px;
+  color: var(--text-dim); margin-top: 4px; border-left: 3px solid var(--accent);
+}
+.idea-ux b { color: var(--text); font-weight: 600; }
+
+/* -------- feature bank -------- */
+.bank-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.fcard {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; box-shadow: var(--shadow);
+}
+.fcard-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.fcard-name { font-size: 13.5px; font-weight: 700; }
+.fcard-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+
+.bank-group { margin-bottom: 30px; }
+.bank-group-title { font-size: 13px; font-weight: 700; color: var(--accent-text); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.bank-group-title .n { font-family: var(--mono); font-size: 11px; color: var(--text-faint); font-weight: 500; }
+
+/* -------- questions -------- */
+.qlist { display: flex; flex-direction: column; gap: 14px; }
+.q {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 20px; box-shadow: var(--shadow); display: flex; gap: 14px;
+}
+.q-num {
+  font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent-text);
+  flex-shrink: 0; width: 22px; padding-top: 1px;
+}
+.q-body b { display: block; font-size: 14.5px; margin-bottom: 4px; }
+.q-body span { font-size: 13px; color: var(--text-dim); }
+
+/* -------- master plan table -------- */
+.plan-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+table.plan { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13px; }
+table.plan th {
+  text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600; padding: 11px 14px; border-bottom: 1px solid var(--border-strong);
+  background: var(--surface-2); position: sticky; top: 0;
+}
+table.plan td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text-dim); }
+table.plan tr:last-child td { border-bottom: none; }
+table.plan .phase-name { color: var(--text); font-weight: 700; }
+table.plan .phase-num { font-family: var(--mono); color: var(--text-faint); font-size: 11.5px; }
+.status-pill { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+.status-pill.done { background: var(--ok-soft); color: var(--ok); }
+.status-pill.partial { background: var(--warn-soft); color: var(--warn); }
+.status-pill.new { background: var(--info-soft); color: var(--info); }
+.status-pill.todo { background: var(--surface-2); color: var(--text-faint); }
+.status-pill.future { background: var(--future-soft); color: var(--future); }
+
+.note {
+  font-size: 13px; color: var(--text-dim); background: var(--surface-2); border-radius: 10px;
+  padding: 12px 16px; line-height: 1.6; margin-top: 16px;
+}
+.note b { color: var(--text); }
+
+footer { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
+
+@media (max-width: 700px) {
+  .idea-grid { grid-template-columns: 1fr; }
+  h1 { font-size: 27px; }
+}
+</style>
+
+<div class="wrap">
+
+<div class="masthead">
+  <div class="kicker">CigilBot · Roadmap v2 · черновик для обсуждения</div>
+  <h1>От антиспама к операционной системе стримера</h1>
+  <p class="lede">Фундамент (Фазы 1–2, часть 3) построен и работает на живых каналах. Этот документ — анализ
+  десяти предложенных направлений, банк из 57 идей (свои + от второй сессии проектирования) и решение
+  о том, что входит в основу, а что осознанно откладывается.</p>
+  <div class="meta-row">
+    <span>13.08.2026</span>
+    <span>Phase 1–2 закрыты · Phase 3 почти закрыта</span>
+    <span>Без кода — только проектирование</span>
+  </div>
+</div>
+
+<nav class="toc">
+  <a href="#state">Где мы сейчас</a><span class="sep">·</span>
+  <a href="#foundation">Основа</a><span class="sep">·</span>
+  <a href="#ideas">Разбор 10 идей</a><span class="sep">·</span>
+  <a href="#bank">Банк 1 — 27 идей</a><span class="sep">·</span>
+  <a href="#bank2">Банк 2 — 30 идей</a><span class="sep">·</span>
+  <a href="#questions">Вопросы</a><span class="sep">·</span>
+  <a href="#plan">Обновлённый Master Plan</a>
+</nav>
+
+<section id="state">
+  <div class="section-eyebrow">Точка отсчёта</div>
+  <h2>Что уже держит вес</h2>
+  <p class="section-desc">
+    Прежде чем добавлять новые направления — то, на чём они будут стоять, проверено по реальному коду, не по памяти.
+  </p>
+  <div class="idea-grid" style="grid-template-columns: repeat(3, 1fr);">
+    <div class="idea-field"><div class="l">Twitch API сейчас</div><div class="v">Только ban / timeout / delete_messages. Ни title/game, ни slow-mode, ни EventSub — нужны новые scope и новый Helix-клиент.</div></div>
+    <div class="idea-field"><div class="l">Команды чата</div><div class="v">Уже есть (twitchio.ext.commands, префикs "!"). Добавить !title/!game — вопрос новых методов, не новой инфраструктуры.</div></div>
+    <div class="idea-field"><div class="l">WebSocket в панели</div><div class="v">Poll-снапшот раз в 2 сек из SQLite, не push-по-событию. Годится для новых метрик, не годится для OBS-команд с низкой задержкой.</div></div>
+    <div class="idea-field"><div class="l">Аналитика в БД</div><div class="v">mod_messages/mod_stats_daily уже копят сырьё. Но нет понятия "стрим" (start/end) — только календарный день.</div></div>
+    <div class="idea-field"><div class="l">TTS / OBS</div><div class="v">Ни строчки кода, ни зависимости. Голосовой стек в проекте — только распознавание речи (STT), не синтез.</div></div>
+    <div class="idea-field"><div class="l">Trust-система</div><div class="v">TrustLevel (4 уровня) + mod_trusted (журнал решений) уже есть. Экран в панели — вопрос UI, не модели данных.</div></div>
+  </div>
+</section>
+
+<section id="foundation">
+  <div class="section-eyebrow">Решено 13.08.2026</div>
+  <h2>Основа — делаем сейчас, без отклада</h2>
+  <p class="section-desc">
+    Всё остальное в этом документе (57 идей суммарно) осознанно отложено в банк — не потеряно, но и не в
+    ближайшей работе. Порядок карточек ниже — реальный порядок работы, решённый в аудите 13.08: начинаем с
+    самого дешёвого и видимого, не по номеру фазы.
+  </p>
+  <div class="bank-grid" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="fcard" style="border-color: var(--accent);">
+      <div class="fcard-head"><span class="fcard-name">1. Trusted Users экран</span><span class="tag now">Начинаем отсюда</span></div>
+      <div class="fcard-desc">TrustLevel и mod_trusted уже существуют и уже используются движком — не хватает только экрана в панели. Самый дешёвый пункт из всех 57 идей в документе, первый видимый результат.</div>
+    </div>
+    <div class="fcard" style="border-color: var(--accent);">
+      <div class="fcard-head"><span class="fcard-name">2. Добить Moderation (Фаза 3)</span><span class="tag now">Основа</span></div>
+      <div class="fcard-desc">Watchlist, Warning System, Review Queue — закрывает то, что уже почти готово (прогрессивные таймауты и Cross-Channel Fingerprint сделаны), без новых внешних зависимостей.</div>
+    </div>
+    <div class="fcard" style="border-color: var(--accent);">
+      <div class="fcard-head"><span class="fcard-name">3. Twitch-команды чата</span><span class="tag now">Основа</span></div>
+      <div class="fcard-desc">!title / !game / !slow. Обработчик команд уже существует — нужен только новый OAuth scope и пара методов. Заметный эффект со стрима с первого дня.</div>
+    </div>
+    <div class="fcard" style="border-color: var(--accent);">
+      <div class="fcard-head"><span class="fcard-name">4. EventSub + Stream Session Marker</span><span class="tag now">Основа</span></div>
+      <div class="fcard-desc">Фундамент, от которого зависит половина всей аналитики в обоих банках ниже (Post-Stream Report, Timeline, Heatmap, Retention). Дольше и без видимого результата в первые дни — поэтому последний в порядке, хотя архитектурно самый важный.</div>
+    </div>
+  </div>
+  <div class="note">
+    <b>Почему не OBS/TTS и не AI-функции сейчас:</b> обе линии требуют новой инфраструктуры (push-канал вместо
+    poll-WS, внешний LLM с вопросами приватности/стоимости) — вкладывать в них время раньше, чем закрыта
+    основа, значит откладывать то, что уже приносит пользу стримеру каждый день модерации.
+  </div>
+</section>
+
+<section id="ideas">
+  <div class="section-eyebrow">Часть 1</div>
+  <h2>Разбор десяти предложенных направлений</h2>
+  <p class="section-desc">
+    Фаза, сложность, зависимости, польза стримеру, UX и рекомендация "сейчас / позже" — для каждой идеи отдельно.
+    Сложность оценена по факту: что уже есть в коде против того, что придётся строить с нуля.
+  </p>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">1. Twitch-команды из чата (!title, !game, !slow…)</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4.5</span><span class="tag now">Сейчас</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Средняя <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Новый OAuth scope (channel:manage:broadcast, moderator:manage:chat_settings) + новый Helix-клиент</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Не выходя из игры — сменить title/game/slow-mode одной строкой в чате</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Обработчик команд уже существует (<b>main.py</b>, twitchio.ext.commands, префикс "!"), сейчас в нём две команды. Новые ложатся туда же тем же паттерном прав, что уже есть у <b>!remember</b>. Каждая команда обязана идти через <b>Chat → Permission Check → Audit Log → Twitch API → Success/Fail</b> — тот же принцип, что уже применяется к ручным банам, не в обход его.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">2. Управление OBS (сцены, звуки, оверлеи)</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4.5</span><span class="tag later">Позже</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Высокая <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Новый push-канал (не подходит нынешний poll-WS), OBS WebSocket клиент — с нуля, нет ни строчки</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Чат управляет сценой/звуком напрямую — сильный интерактив, но не про модерацию</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Существующий WS в панели — периодический снимок БД раз в 2 сек, не подходит для команды "сейчас переключи сцену". Нужен отдельный push-механизм (in-memory очередь подписчиков или отдельный WS-сервер) — реальная новая подсистема, не расширение старой. Ставить после того, как Twitch-команды (идея 1) обкатают паттерн прав/аудита на более простом случае.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">3. TTS через OBS</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4.5</span><span class="tag later">Позже</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Высокая <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Напрямую зависит от идеи 2 (OBS-канал) + новый синтез речи (в проекте есть только STT, не TTS)</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Донаты/сообщения озвучиваются вслух — классика для доната-based каналов</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Голосовой пайплайн в проекте (faster-whisper, sounddevice) — это распознавание речи для голосового ввода бота, симметричной части (текст → голос) не существует вовсе. Строить после OBS-канала: TTS без пути его доставки на стрим бессмысленен сам по себе.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">4. Mini Apps — система плагинов</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4.5→7</span><span class="tag later">Позже</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Очень высокая <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Требует, чтобы 3-4 реальных модуля (Polls, Timer, Soundboard…) сначала были написаны вручную — паттерн выводится из них, не придумывается заранее</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Долгосрочно огромная — десятки модулей без раздувания кодовой базы</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Панель "включил галочку — появилась функция" — красивая идея, но архитектура плагинной системы, спроектированная до того, как написан хотя бы один плагин, почти всегда оказывается неверной. Правильный порядок: 3-4 модуля как обычный код → заметить общий паттерн (общая точка регистрации команд, общее хранилище настроек per-channel) → тогда формализовать в Apps-фреймворк.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">5. Расширенная аналитика стрима</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4</span><span class="tag now">Сейчас</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Средняя <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Требует Stream Session Marker (граница online/offline через EventSub) как фундамент — иначе агрегаты сыплются по календарным дням, не по стримам</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Самый недооценённый блок по вашим же словам — и данные для него уже частично копятся</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">mod_messages и mod_stats_daily уже содержат сырьё (created_at, флаги, счётчики). Не хватает ровно одной вещи, блокирующей всё остальное: понятия "это один стрим". Первый шаг — не отчёты, а EventSub-подписка на stream.online/offline и новая таблица mod_streams.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">6. Post-Stream Report</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4→5</span><span class="tag later">Позже (после идеи 5)</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Средняя <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Полностью зависит от Stream Session Marker — без границ стрима отчёт считать не из чего</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Высокая — то самое "что реально произошло на стриме", а не голая цифра просмотров</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Уже есть прецедент дизайна: ежедневный Discord-digest (cigilbot/alerts.py) — та же идея "отправить сводку, не заставлять искать", просто по стриму, не по суткам. Естественно переиспользовать тот же embed-паттерн + карточку в панели.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">7. Chat Health (единый % здоровья чата)</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 4</span><span class="tag later">Позже</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Средне-высокая <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Формула решена (см. аудит) — прозрачная, раскрываемая в панели, не единая непрозрачная цифра</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Сильная метрика для быстрого скана, с полным объяснением "из чего сложено"</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Explainable прежде AI — принцип уже зафиксирован в архитектуре (см. вес каждого детектора, видимый в панели). <b>Решено в аудите:</b> Chat Health следует тому же — не "91%" из ниоткуда, а раскрываемая карточка "из чего сложено" (активность / доля спама / удержание), ML-модель без разбора по составляющим отклонена явно.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">8. Stream Timeline (журнал событий стрима)</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 5</span><span class="tag later">Позже (после идеи 5)</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Средняя <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Stream Session Marker (границы) + Incident Center (идея из банка ниже) как источник событий на ленту</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Отличный "второй экран" после стрима — что было, без пересмотра VOD</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Данные для части точек уже есть: raid_started уже перехватывается (USERNOTICE), новые кластеры уже пишутся с created_at. Timeline — во многом визуализация того, что engine уже логирует, плюс новые типы точек (giveaway start/end, клипы). Строить как read-модель поверх существующих таблиц, не новую систему хранения.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">9. Trusted Users / Trust Score</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 3 (хвост) / 4</span><span class="tag now">Сейчас</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Низкая <span class="complexity-dots"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Почти никаких — TrustLevel и mod_trusted уже существуют и уже используются движком</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Мгновенная — модератор с первого взгляда видит, кому доверять</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Это уже вкладка Trusted Regulars из направления 04 master-plan.html — данные готовы, не хватает только экрана. Цветные пилюли (🟢/🟡/🔴) ложатся прямо на существующий TrustLevel-enum. Отдельно: "балльный Trust Score" (число, не 4 категории) — это уже новая модель данных поверх текущей, стоит решить, нужна ли она вообще, или категорий достаточно.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <h3 class="idea-title">10. AI Stream Summary</h3>
+      <div class="idea-tags"><span class="tag phase">Phase 5–6</span><span class="tag blocked">Позже, осторожно</span></div>
+    </div>
+    <div class="idea-grid">
+      <div class="idea-field"><div class="l">Сложность</div><div class="v">Высокая <span class="complexity-dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span></span></div></div>
+      <div class="idea-field"><div class="l">Зависимости</div><div class="v">Требует Stream Timeline. Граница по данным решена (см. аудит) — только агрегаты/ключевые слова в LLM, без сырых сообщений зрителей</div></div>
+      <div class="idea-field"><div class="l">Польза стримеру</div><div class="v">Приятный бонус, не критичная функция — "о чём говорил чат"</div></div>
+      <div class="idea-field full">
+        <div class="l">UX</div>
+        <div class="idea-ux">Прямое трение с уже заявленным принципом проекта: "Explainable прежде AI — там, где обычная статистика/правило даёт нужный результат, используется оно, не модель" (docs/master-plan.html). <b>Решено в аудите:</b> граница проходит по данным, не по функции — во внешний LLM уходят только агрегаты и ключевые слова, не тексты сообщений зрителей. Свод получится более поверхностным, зато не требует передачи чужой переписки третьей стороне.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="bank">
+  <div class="section-eyebrow">Часть 2 · Банк 1</div>
+  <h2>27 идей — первый проход</h2>
+  <p class="section-desc">
+    Сгруппировано по той же логике, что и разбор выше — что усиливает существующий модерационный core,
+    что открывает новый Stream Operations, что превращает панель в полноценную аналитику.
+  </p>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Moderation — добить Phase 3 <span class="n">8 идей</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Warning System</span></div><div class="fcard-desc">Формальное предупреждение как отдельное действие между OBSERVE и TIMEOUT — сейчас такой ступени нет вовсе.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Review Queue</span></div><div class="fcard-desc">Очередь пограничных вердиктов (confidence 0.4–0.7) на ручной просмотр — не пропадают в общем потоке Live.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Bulk Actions по фильтру</span></div><div class="fcard-desc">"Забанить всех с risk > 80 за последний час" одной кнопкой поверх уже существующего executor'а.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Ban Reason Templates</span></div><div class="fcard-desc">Готовые причины бана вместо ручного ввода каждый раз — быстрее и единообразнее в аудите.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Shadow Mode per pattern</span></div><div class="fcard-desc">Тестировать новый паттерн в SHADOW, не трогая общий режим канала — безопасная обкатка правил.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Appeal Flow</span></div><div class="fcard-desc">Забаненный зритель может подать апелляцию через форму — закрывает дыру в UNBAN-направлении.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Word Filter Severity Tiers</span></div><div class="fcard-desc">Не один словарь на всё — уровни (предупреждение / таймаут / бан) на категорию слов.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Moderator Score</span></div><div class="fcard-desc">% подтверждённых/отменённых действий модератора. <b>Решено в аудите:</b> видно только оператору/владельцу канала, не всей команде модераторов — аналитика, не публичный рейтинг.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Stream Operations — новое направление <span class="n">6 идей</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Stream Markers</span></div><div class="fcard-desc">!marker "босс появился" — метка на таймлайне, синхронизированная с VOD-таймкодом для монтажа клипов.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Auto-Clip on Spike</span></div><div class="fcard-desc">Всплеск сообщений/эмоутов → авто-триггер Twitch Clip API — ловит хайповые моменты без ручного нажатия.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Command Cooldowns per role</span></div><div class="fcard-desc">Разный кулдаун на команду для VIP/sub/обычного зрителя — стандарт для command-based ботов.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Scheduled Commands</span></div><div class="fcard-desc">"Каждые 20 минут напомнить про Discord" — не через внешний таймер-бот, а внутри самого CigilBot.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Stream Checklist</span></div><div class="fcard-desc">Чеклист "перед стримом" (title/game/оверлей/микрофон) прямо в панели, отмечается по ходу.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Sound Alerts на события</span></div><div class="fcard-desc">Не только по команде — авто-звук на конкретное событие (новый sub, рейд), тот же OBS-канал.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Analytics & Intelligence <span class="n">8 идей</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Incident Center</span></div><div class="fcard-desc">Отдельная страница: все атаки/рейды/всплески в одном месте, не разбросано по вкладкам.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Growth Trends</span></div><div class="fcard-desc">Не разовый снимок, а график "новых чаттеров/подписчиков" за месяцы — видно, растёт ли канал.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Detector Effectiveness Table</span></div><div class="fcard-desc">Какой детектор сколько ловит и какой у него FP-rate — уже есть частично, довести до полноценного экрана.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Peer Comparison (anon)</span></div><div class="fcard-desc">"Твой Chat Health выше среднего по каналам похожего размера" — обезличенно, across всех каналов оператора.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Retention Cohorts</span></div><div class="fcard-desc">Сколько новых зрителей с прошлого стрима вернулись — реальная метрика удержания аудитории.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Weekly Digest (не только daily)</span></div><div class="fcard-desc">Расширение уже существующего механизма digest — недельная сводка поверх ежедневной.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Export to CSV/PDF</span></div><div class="fcard-desc">Post-Stream Report и Analytics — экспорт для спонсорских отчётов и медиакитов.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Top Chatters Leaderboard</span></div><div class="fcard-desc">Публичная (или только для стримера) таблица самых активных — геймификация вовлечённости.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Community & Engagement <span class="n">6 идей</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Loyalty Points</span></div><div class="fcard-desc">Очки за активность в чате, обмен на что-то (шаутаут, приоритет в очереди) — база для мини-игр позже.</div></div>
+      <div class="fcard" style="border-color: var(--accent);"><div class="fcard-head"><span class="fcard-name">Custom Commands (no-code)</span><span class="tag now" style="font-size:9px;">Первый App</span></div><div class="fcard-desc">Стример сам создаёт !discord, !socials через панель, без кода. <b>Решено в аудите:</b> первый модуль Mini Apps System, когда до неё дойдём — ключевой для будущего SaaS-сценария.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Quote Database</span></div><div class="fcard-desc">!addquote / !quote — сохранённые смешные фразы чата, классика community-ботов.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Wheel of Fortune / Raffle</span></div><div class="fcard-desc">Розыгрыш прямо в чате — естественно совмещается с уже существующим Giveaway Mode (снижение чувствительности детекции).</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Welcome Messages</span></div><div class="fcard-desc">Настраиваемое приветствие first-time чаттеру — тег first-msg уже читается детекторами, переиспользовать тот же сигнал.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Subscriber Milestones</span></div><div class="fcard-desc">Авто-алерт при round-number подписчике/зрителе — небольшой, но приятный штрих.</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="bank2">
+  <div class="section-eyebrow">Часть 3 · Банк 2</div>
+  <h2>30 идей — вторая сессия проектирования</h2>
+  <p class="section-desc">
+    От "CigilBot как операционная система канала". Часть идей пересекается или дополняет банк 1 — отмечено
+    в описании. Ни одна не входит в основу (см. раздел выше) — но полезно видеть, куда расти дальше.
+  </p>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Stream Operations <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Stream Notes</span></div><div class="fcard-desc">!note "баг с микрофоном" — заметки модератора собираются в таймлайн после стрима, не теряются в чате.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Stream Markers+</span></div><div class="fcard-desc">Расширение уже существующей идеи Stream Markers (банк 1) — типизированные метки (смешной момент/баг/клип/хайлайт) вместо одной общей.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Clip Candidates</span></div><div class="fcard-desc">Авто-детект пиков активности (рост сообщений/эмодзи/зрителей) как кандидатов на клип — переиспользует логику существующего burst-детектора, плюс Twitch Clip API.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Работа со зрителями <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">VIP Candidate System</span></div><div class="fcard-desc">Бот сам предлагает кандидатов на VIP по активности/стажу/чистой истории — среднего размера, не блокирует ничего.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Viewer Journey</span></div><div class="fcard-desc">Карточка "история игрока": первый визит/сообщение/саб/рейд/VIP. Каркас (first_seen, message_count) уже есть в mod_users — событийная часть требует EventSub.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Community Health</span></div><div class="fcard-desc">Расширенная версия Chat Health из разбора 10 идей — новые/вернувшиеся зрители, удержание, не только "здоровье" в моменте.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">AI-функции <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">AI Chat Summary</span></div><div class="fcard-desc">Сводка тем каждые 30 минут — тот же вопрос приватности/стоимости, что у AI Stream Summary (разбор 10 идей, пункт 10).</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">AI Question Detector</span></div><div class="fcard-desc">Собирает вопросы зрителей, пропущенные стримером — узкая, дешёвая относительно других AI-идей: не нужен полный чат, только сообщения с "?".</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">AI Topic Detection</span></div><div class="fcard-desc">Топ тем за стрим — тот же блокер, что у AI Chat Summary, частично можно закрыть без LLM (частотный анализ ключевых слов).</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Продвинутая модерация <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Shadow Mode (per pattern)</span></div><div class="fcard-desc">То же, что Shadow Mode per pattern из банка 1 — движок уже по умолчанию в Mode.SHADOW, расширение до тестирования конкретного правила отдельно.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Appeal Center</span></div><div class="fcard-desc">То же, что Appeal Flow из банка 1 — аудит для него уже пишется в mod_actions, не хватает формы и экрана просмотра.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Moderator Score</span></div><div class="fcard-desc">% подтверждённых/отменённых действий модератора. Метрика простая (mod_actions уже хранит нужное), но как публичная оценка легко превращается в надзор за командой — обсудить культуру использования до того, как показывать цифру.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Аналитика <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Stream Success Score</span></div><div class="fcard-desc">Единый рейтинг стрима из вовлечённости/активности/удержания — тот же принцип explainable, что и у Chat Health: раскрываемая карточка, не чёрный ящик.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Viewer Retention</span></div><div class="fcard-desc">Пришли/ушли за 5 минут/остались больше часа — уточнённая версия Retention Cohorts из банка 1.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Activity Heatmap</span></div><div class="fcard-desc">По часам, столбиками. Чистая визуализация уже копящегося mod_messages.created_at — самый дешёвый пункт всего банка 2.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">OBS-интеграции <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Voice Alerts (!say)</span></div><div class="fcard-desc">Дубль идеи TTS через OBS (разбор 10 идей, пункт 3) — тот же блокер: push-канал + синтез речи с нуля.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Scene Automation</span></div><div class="fcard-desc">Смена сцены по условию (низкий онлайн → убрать оверлей) — требует OBS-канала (разбор 10 идей, пункт 2) плюс отдельный движок правил.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Smart Countdown</span></div><div class="fcard-desc">!timer 10 в OBS — тривиален поверх готового OBS-канала, сам по себе не самостоятельная задача.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Интерактив <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Giveaways 2.0</span></div><div class="fcard-desc">Розыгрыш с фильтрами (подписчики/стаж/чистая история) — совмещается с уже существующим Giveaway Mode.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Predictions+</span></div><div class="fcard-desc">Twitch Predictions с красивой статистикой в панели — среднего размера, не блокирует ничего другого.</div></div>
+      <div class="fcard"><div class="fcard-head"><span class="fcard-name">Wheel of Names</span></div><div class="fcard-desc">Колесо участников через OBS — требует OBS-канала, сам по себе тривиален.</div></div>
+    </div>
+  </div>
+
+  <div class="bank-group">
+    <div class="bank-group-title">Далёкое будущее <span class="n">3 идеи</span></div>
+    <div class="bank-grid">
+      <div class="fcard" style="border-color: var(--future);"><div class="fcard-head"><span class="fcard-name">Cross-Channel Reputation</span></div><div class="fcard-desc">Единый профиль пользователя across каналов оператора — Cross-Channel Bot Fingerprint уже переносит баны между каналами, это следующий шаг на той же инфраструктуре (fingerprints.db), не с нуля.</div></div>
+      <div class="fcard" style="border-color: var(--future);"><div class="fcard-head"><span class="fcard-name">AI Moderator Assistant</span></div><div class="fcard-desc">Не модерирует сам — подсказывает модератору контекст ("4 жалобы за 15 минут"). Технически надстройка над уже существующими сигналами, но первая функция, которая говорит, а не показывает — требует зрелого Chat Health/Timeline под собой.</div></div>
+      <div class="fcard" style="border-color: var(--future);"><div class="fcard-head"><span class="fcard-name">Stream Copilot</span></div><div class="fcard-desc">Советы стримеру в реальном времени ("активность падает, время для розыгрыша") — самый амбициозный пункт всего документа. Хороший горизонт, плохая точка входа: нет смысла строить без всего, что должно быть под ним.</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="questions">
+  <div class="section-eyebrow">Аудит 13.08.2026 — второй проход</div>
+  <h2>Восемь вопросов, восемь ответов</h2>
+  <p class="section-desc">
+    Первый проход был неполным: три пункта помечались решёнными по одному лишь выбору состава основы, без
+    вашего прямого ответа на сам вопрос. Здесь каждый вопрос задан заново — каждое решение ваше, не моя
+    догадка за вас.
+  </p>
+  <div class="qlist">
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Кто целевой пользователь?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> сейчас вы и ваша команда, но в будущем — продукт для чужих стримеров. Меняет требования к "необратимым" решениям уже сейчас (см. раздел SaaS-готовность ниже), но не приоритет фаз — Public Site остаётся Фазой 8.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Stream Operations — новая Фаза 4.5, или часть Automation?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> отдельная 4.5. Twitch-команды входят в основу, OBS/TTS из неё вынесены в Фазу 7 — разные Twitch-права и разный риск-профиль не дают объединить их в одну фазу.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>OBS-интеграция — обязательное направление или экспериментальное крыло?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> отложена в банк (Фаза 7). Push-WS-инфраструктуру сейчас не проектируем — вернёмся, когда основа закрыта.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Какие Mini App написать первыми, когда дойдём до Apps System?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> Custom Commands (no-code) — стример сам создаёт !discord/!socials через панель. Совпадает с решением про SaaS: это ключевой модуль для чужих стримеров, не только для себя.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Chat Health — прозрачная формула или ML-модель?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> прозрачная формула, раскрываемая в карточку "из чего сложено" (активность/спам-rate/удержание). Совместимо с принципом explainable-прежде-AI, уже действующим в движке.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>AI-функции (Summary/Topic Detection/Question Detector) — где граница по данным зрителей?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> только агрегаты и ключевые слова во внешний LLM, без сырых сообщений зрителей. Дешевле и безопаснее по приватности, свод получится более поверхностным — принятый компромисс.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Trust Score — менять модель или оставить как есть?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> оставить 4 категории (UNKNOWN/REGULAR/TRUSTED/PRIVILEGED). Уже работают в движке, policy и панели — переход на балл 0–100 был бы новой моделью данных без веской причины сейчас.</span></div></div>
+    <div class="q"><div class="q-num" style="color:var(--ok);">✓</div><div class="q-body"><b>Готовы ли вы к EventSub?</b><span><b style="display:inline;color:var(--ok);">Решено:</b> да, входит в основу как первый пункт Фазы 4. Разблокирует Post-Stream Report, Timeline, Activity Heatmap, Viewer Retention и Viewer Journey разом.</span></div></div>
+  </div>
+  <div class="note">
+    <b>Сверх исходных восьми:</b> Moderator Score делаем, но видит его только оператор/владелец канала —
+    команде модераторов видимость друг о друге даёт больше давления, чем пользы. Основу начинаем с
+    <b>Trusted Users-экрана</b>: дешевле остальных трёх, а результат виден сразу.
+  </div>
+</section>
+
+<section id="saas">
+  <div class="section-eyebrow">Ограничение на выбор архитектуры</div>
+  <h2>SaaS-готовность: только необратимое</h2>
+  <p class="section-desc">
+    Вы сегодня единственный оператор, в будущем — возможно, продукт для чужих стримеров. Multi-tenant UI и
+    self-serve onboarding остаются в Фазе 8. Сейчас важно другое: не принять в основе решение, которое потом
+    придётся переписывать с нуля.
+  </p>
+  <div class="idea-grid" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="idea-field"><div class="l">Учитываем уже сейчас</div><div class="v">Схема БД с расчётом на чужие каналы (уже так — broadcaster_id, не login), изоляция данных между каналами (уже так — mod.&lt;id&gt;.db), аудит-лог для любого действия (уже так — mod_actions).</div></div>
+    <div class="idea-field"><div class="l">Осознанно НЕ делаем сейчас</div><div class="v">Self-serve онбординг, биллинг, multi-tenant UI с ролью "владелец продукта" поверх Operator, публичный лендинг. Всё это — Фаза 8, без изменений в приоритете.</div></div>
+  </div>
+</section>
+
+<section id="plan">
+  <div class="section-eyebrow">Черновик</div>
+  <h2>Обновлённый Master Plan</h2>
+  <p class="section-desc">
+    Фазы 1–2 без изменений. Дальше — основа (13.08.2026, зелёным ниже) плюс банк из 57 идей, разложенный по
+    фазам на будущее, но не в текущей работе.
+  </p>
+  <div class="plan-wrap">
+    <table class="plan">
+      <thead><tr><th>Фаза</th><th>Фокус</th><th>Статус</th><th>Ключевые пункты</th></tr></thead>
+      <tbody>
+        <tr><td class="phase-num">1</td><td class="phase-name">Core</td><td><span class="status-pill done">Готово</span></td><td>Channel Registry · роль Operator · управляемые процессы</td></tr>
+        <tr><td class="phase-num">2</td><td class="phase-name">Alerts & Visibility</td><td><span class="status-pill done">Готово</span></td><td>Discord-алерты · deep-link · digest · Operator Home</td></tr>
+        <tr><td class="phase-num">3</td><td class="phase-name">Moderation</td><td><span class="status-pill partial">Основа — шаг 1–2</span></td><td>✅ Прогрессивные таймауты · ✅ Cross-Channel Fingerprint · <b>→ 1. Trusted Users экран · 2. Watchlist · Warning System · Review Queue · Moderator Score (только оператору)</b></td></tr>
+        <tr><td class="phase-num">4</td><td class="phase-name">Analytics Foundation</td><td><span class="status-pill partial">Основа — шаг 4</span></td><td><b>→ 4. EventSub + Stream Session Marker</b> (последний по порядку, но блокирует Post-Stream Report/Timeline/Heatmap/Retention ниже)</td></tr>
+        <tr><td class="phase-num">4.5</td><td class="phase-name">Stream Operations</td><td><span class="status-pill partial">Основа — шаг 3</span></td><td><b>→ 3. Twitch-команды</b> (!title/!game/!slow) · OBS-канал и TTS отложены в банк</td></tr>
+        <tr><td class="phase-num">5</td><td class="phase-name">Analytics & Intelligence</td><td><span class="status-pill todo">Банк</span></td><td>Post-Stream Report · Chat Health (формула решена) · Stream Timeline · Activity Heatmap · Incident Center · AI Summary/Topic/Question Detector (агрегаты, без сырого чата)</td></tr>
+        <tr><td class="phase-num">6</td><td class="phase-name">Automation</td><td><span class="status-pill todo">Банк</span></td><td>Autoban с окном отмены · UNBAN · Scheduled Commands · Appeal Center · Shadow Mode per pattern</td></tr>
+        <tr><td class="phase-num">7</td><td class="phase-name">Stream Operations+ / OBS</td><td><span class="status-pill todo">Банк</span></td><td>OBS-канал (push, не poll) · TTS · Scene Automation · Clip Candidates · Stream Markers+/Notes</td></tr>
+        <tr><td class="phase-num">8</td><td class="phase-name">Community & Apps</td><td><span class="status-pill todo">Банк</span></td><td><b>Custom Commands no-code — первый модуль</b> · Loyalty Points · Giveaways 2.0 · Predictions+ · Mini Apps System (framework после 1 реального модуля)</td></tr>
+        <tr><td class="phase-num">9</td><td class="phase-name">Далёкое будущее</td><td><span class="status-pill future">Отложено</span></td><td>Cross-Channel Reputation (полный профиль) · AI Moderator Assistant · Stream Copilot · Public Site · Discord Live Actions</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b>Как читать таблицу:</b> "Основа — в работе" — то, что решено делать сейчас (13.08.2026), без отклада.
+    Всё с пометкой "Банк" — сохранено и приоритизировано по фазам, но не в текущей работе; порядок фаз 5–9
+    отражает зависимости (Analytics не может опираться на Session Marker, пока его нет — поэтому вся Фаза 5
+    ждёт Фазы 4), не срочность. Далёкое будущее — три идеи, каждая из которых явно требует зрелости того, что
+    выше неё в этой же таблице.
+  </div>
+</section>
+
+<footer>CigilBot Roadmap v2 · черновик для обсуждения · ничего не реализовано</footer>
+
+</div>
