@@ -1127,6 +1127,76 @@ class TestDailyStatsEndpoint:
         assert data[0]["total_messages"] == 42
 
 
+class TestOverviewEndpoint:
+    """Operator Home (направление 06 master-plan.html) — KPI across каналов,
+    карточка на канал, лента алертов. DEFAULT_TEST_BROADCASTER_ID/CHANNEL
+    из conftest уже зарегистрированы в Registry фикстурой tmp_root."""
+
+    async def test_requires_session(self, app_client: TestClient) -> None:
+        resp = app_client.get("/api/moderation/overview")
+        assert resp.status_code == 401
+
+    async def test_no_activity_by_default(self, app_client: TestClient) -> None:
+        login_as(app_client, "VIEWER")
+
+        resp = app_client.get("/api/moderation/overview")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["kpi"]["channels_connected"] == 1
+        assert data["kpi"]["new_clusters"] == 0
+        assert data["alerts"] == []
+        assert len(data["channels"]) == 1
+        assert data["channels"][0]["profile"] == "main"
+        assert data["channels"][0]["status"] == "idle"
+
+    async def test_active_cluster_feeds_kpi_and_alerts(
+        self, app_client: TestClient, store: ModerationStore
+    ) -> None:
+        await store.save_cluster(make_cluster())
+        login_as(app_client, "VIEWER")
+
+        resp = app_client.get("/api/moderation/overview")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["kpi"]["new_clusters"] == 1
+        assert data["channels"][0]["status"] == "live"
+        assert data["channels"][0]["active_clusters"] == 1
+        assert len(data["alerts"]) == 1
+        assert data["alerts"][0]["channel"] == "test_channel"
+        assert data["alerts"][0]["risk_score"] == 70
+
+    async def test_attack_mode_overrides_status(
+        self, app_client: TestClient, store: ModerationStore
+    ) -> None:
+        await store.activate_attack_mode(activated_by="test_user", duration_seconds=600)
+        login_as(app_client, "VIEWER")
+
+        resp = app_client.get("/api/moderation/overview")
+
+        assert resp.status_code == 200
+        assert resp.json()["channels"][0]["status"] == "attack"
+
+    async def test_channel_without_db_reports_offline(
+        self, app_client: TestClient, tmp_root: Path
+    ) -> None:
+        registry = RegistryStore(str(tmp_root / "registry.db"))
+        await registry.connect()
+        await registry.upsert_channel(
+            broadcaster_id="second", login="second_channel", registered_by="manual"
+        )
+        await registry.close()
+        login_as(app_client, "VIEWER")
+
+        resp = app_client.get("/api/moderation/overview")
+
+        assert resp.status_code == 200
+        by_profile = {c["profile"]: c for c in resp.json()["channels"]}
+        assert by_profile["second"]["status"] == "offline"
+        assert by_profile["second"]["active_clusters"] == 0
+
+
 MINIMAL_VALID_YAML = "version: 1\nmode: BALANCED\n"
 
 

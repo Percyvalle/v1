@@ -267,35 +267,92 @@ function highlightClusterIfPending() {
   setTimeout(() => card.classList.remove("cluster-card-highlight"), 2600);
 }
 
-// --- экран "Каналы" -------------------------------------------------------
+// --- экран "Каналы" (Operator Home, направление 06 master-plan.html) -----
+// Один запрос /api/moderation/overview вместо N вызовов attack_mode (по
+// одному на карточку, как раньше) — KPI-строка, карточки с метриками и
+// лента алертов собираются из одного ответа.
+
+const STATUS_PILL = {
+  attack: { cls: "", style: "background:var(--danger-soft);color:var(--danger);", label: "Атака" },
+  live: { cls: "running", style: "", label: "Активен" },
+  idle: { cls: "running", style: "", label: "Активен" },
+  offline: { cls: "stopped", style: "", label: "Офлайн" },
+};
+
+function timeAgo(unixSeconds) {
+  const diffSec = Math.max(0, Date.now() / 1000 - unixSeconds);
+  if (diffSec < 60) return "только что";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} мин назад`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} ч назад`;
+  return `${Math.floor(diffSec / 86400)} дн назад`;
+}
+
+function renderOverviewKpi(kpi) {
+  const tiles = el("overview-kpi").querySelectorAll(".stat-value");
+  tiles[0].textContent = kpi.channels_connected;
+  tiles[1].textContent = kpi.new_clusters;
+  tiles[2].textContent = kpi.would_timeout;
+  tiles[3].textContent = kpi.would_ban;
+}
+
+function renderOverviewAlerts(alerts) {
+  const box = el("overview-alerts");
+  if (!alerts.length) {
+    box.innerHTML = '<div class="empty">Пока тихо — новых кластеров не было</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const a of alerts) {
+    const row = document.createElement("div");
+    row.className = "alert-row";
+    row.innerHTML = `
+      <div class="alert-icon crit">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5 14.5 13h-13L8 1.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.2v3M8 11h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </div>
+      <div class="alert-body">
+        <div class="alert-title">${escapeHtml(a.channel)}: ${a.size} ботов, risk ${a.risk_score}</div>
+        <div class="alert-meta">${timeAgo(a.created_at)}</div>
+      </div>
+      <div class="alert-actions"><button class="btn btn-small">Открыть</button></div>
+    `;
+    row.querySelector("button").addEventListener("click", () => {
+      pendingHighlightClusterId = a.cluster_id;
+      selectChannel(a.profile);
+    });
+    box.appendChild(row);
+  }
+}
 
 async function loadChannels() {
   const grid = el("channels-grid");
   if (!lastProfiles.length) {
     grid.innerHTML = '<div class="empty">Каналов пока нет — добавьте канал в Channel Registry</div>';
+    el("overview-alerts").innerHTML = '<div class="empty">Каналов пока нет</div>';
     return;
   }
   grid.innerHTML = '<div class="empty">Загрузка…</div>';
-  const cards = await Promise.all(
-    lastProfiles.map(async (p) => {
-      let attack = null;
-      try {
-        const resp = await fetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(p.profile)}`);
-        if (resp.ok) attack = await resp.json();
-      } catch {
-        // недоступность одного канала не должна валить весь экран
-      }
-      return { profile: p, attack };
-    })
-  );
+
+  let overview;
+  try {
+    const resp = await fetch("/api/moderation/overview");
+    if (!resp.ok) throw new Error(String(resp.status));
+    overview = await resp.json();
+  } catch {
+    grid.innerHTML = '<div class="empty">Не удалось загрузить сводку по каналам</div>';
+    return;
+  }
+
+  renderOverviewKpi(overview.kpi);
+  renderOverviewAlerts(overview.alerts);
+
+  const byProfile = new Map(overview.channels.map((c) => [c.profile, c]));
   grid.innerHTML = "";
-  for (const { profile: p, attack } of cards) {
+  for (const p of lastProfiles) {
     const label = p.channel || p.profile;
+    const c = byProfile.get(p.profile);
+    const pill = STATUS_PILL[c?.status || "offline"];
     const card = document.createElement("div");
     card.className = "channel-card";
-    const statusPill = attack && attack.active
-      ? '<span class="channel-status-pill" style="background:var(--danger-soft);color:var(--danger);">Attack Mode</span>'
-      : '<span class="channel-status-pill running">Активен</span>';
     card.innerHTML = `
       <div class="channel-card-head">
         <div class="channel-card-title">
@@ -305,7 +362,11 @@ async function loadChannels() {
             <div class="channel-id">${escapeHtml(p.profile)}</div>
           </div>
         </div>
-        ${statusPill}
+        <span class="channel-status-pill ${pill.cls}" style="${pill.style}">${pill.label}</span>
+      </div>
+      <div class="channel-metrics">
+        <div class="channel-metric"><div class="v tabular">${c ? c.active_clusters : "—"}</div><div class="l">Активных кластеров</div></div>
+        <div class="channel-metric"><div class="v tabular">${c ? c.new_clusters : "—"}</div><div class="l">Новых, 24ч</div></div>
       </div>
     `;
     card.addEventListener("click", () => selectChannel(p.profile));

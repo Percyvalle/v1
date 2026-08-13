@@ -27,6 +27,7 @@ mod_panel_users) — не из заголовка, который клиент �
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -120,6 +121,105 @@ async def api_profiles(
 # ---------------------------------------------------------------------------
 # Чтение: кластеры, лента вердиктов, аудит
 # ---------------------------------------------------------------------------
+
+
+@router.get("/overview")
+async def api_overview(
+    hours: float = 24.0,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    """Operator Home (направление 06 master-plan.html): KPI across всех
+    каналов Registry, карточка на канал, лента последних алертов — одним
+    запросом вместо N, как раньше делал loadChannels() в JS (attack_mode
+    дёргался отдельно на каждый профиль).
+
+    Алерт-лента строится из mod_clusters (created_at, статус active), не из
+    отдельного лога — своей таблицы для истории алертов нет, а отправленные
+    в Discord алерты (cigilbot/alerts.py::send_cluster_alert) триггерятся
+    на то же событие "новый кластер"."""
+    registry = RegistryStore(str(REGISTRY_DB))
+    await registry.connect()
+    try:
+        channels = await registry.list_channels(status=None)
+    finally:
+        await registry.close()
+
+    since = time.time() - hours * 3600
+    channel_cards: list[dict[str, object]] = []
+    alerts: list[dict[str, object]] = []
+    total_new_clusters = 0
+    total_would_timeout = 0
+    total_would_ban = 0
+    total_messages = 0
+
+    for c in channels:
+        path = _db_path(c.broadcaster_id)
+        if not path.exists():
+            channel_cards.append(
+                {
+                    "profile": c.broadcaster_id,
+                    "channel": c.login,
+                    "status": "offline",
+                    "active_clusters": 0,
+                    "new_clusters": 0,
+                    "would_timeout": 0,
+                    "would_ban": 0,
+                }
+            )
+            continue
+        store = ModerationStore(str(path))
+        await store.connect()
+        try:
+            digest = await store.get_digest_stats(since=since)
+            active_clusters = await store.get_active_clusters(limit=5)
+            attack = await store.get_active_attack_mode()
+        finally:
+            await store.close()
+
+        total_new_clusters += digest.new_clusters
+        total_would_timeout += digest.would_timeout
+        total_would_ban += digest.would_ban
+        total_messages += digest.total_messages
+
+        status = "attack" if attack is not None else ("live" if active_clusters else "idle")
+        channel_cards.append(
+            {
+                "profile": c.broadcaster_id,
+                "channel": c.login,
+                "status": status,
+                "active_clusters": len(active_clusters),
+                "new_clusters": digest.new_clusters,
+                "would_timeout": digest.would_timeout,
+                "would_ban": digest.would_ban,
+            }
+        )
+
+        for cluster in active_clusters:
+            alerts.append(
+                {
+                    "channel": c.login,
+                    "profile": c.broadcaster_id,
+                    "cluster_id": cluster["id"],
+                    "created_at": cluster["created_at"],
+                    "size": cluster["size"],
+                    "risk_score": cluster["risk_score"],
+                }
+            )
+
+    alerts.sort(key=lambda a: a["created_at"], reverse=True)  # type: ignore[arg-type,return-value]
+
+    return {
+        "kpi": {
+            "channels_connected": len(channels),
+            "new_clusters": total_new_clusters,
+            "would_timeout": total_would_timeout,
+            "would_ban": total_would_ban,
+            "total_messages": total_messages,
+            "hours": hours,
+        },
+        "channels": channel_cards,
+        "alerts": alerts[:20],
+    }
 
 
 @router.get("/clusters")

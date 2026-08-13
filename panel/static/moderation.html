@@ -478,6 +478,24 @@ input::placeholder { color: var(--text-faint); }
 }
 .channel-card-add:hover { color: var(--accent-text); }
 
+/* Global Alerts Feed (направление 06 master-plan.html) — та же лента,
+   что уходит в Discord (cigilbot/alerts.py::build_embed), продублирована
+   здесь с deep-link на кластер, чтобы не проверять Discord отдельно. */
+.alert-row {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.alert-row:last-child { border-bottom: none; }
+.alert-icon {
+  width: 30px; height: 30px; border-radius: var(--radius-sm); flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.alert-icon.crit { background: var(--danger-soft); color: var(--danger); }
+.alert-body { flex: 1; min-width: 0; }
+.alert-title { font-size: 13px; font-weight: 600; }
+.alert-meta { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.alert-meta .sep { margin: 0 5px; }
+
 /* Stats */
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px; }
 .stat-tile {
@@ -675,9 +693,19 @@ input::placeholder { color: var(--text-faint); }
 
     <div class="content">
       <div class="screen active" id="screen-channels">
+        <div class="stats-grid" id="overview-kpi">
+          <div class="stat-tile"><div class="stat-value tabular">—</div><div class="stat-label">Каналов подключено</div></div>
+          <div class="stat-tile"><div class="stat-value tabular">—</div><div class="stat-label">Новых кластеров, 24ч</div></div>
+          <div class="stat-tile"><div class="stat-value tabular">—</div><div class="stat-label">Тайм-ауты предложены</div></div>
+          <div class="stat-tile"><div class="stat-value tabular">—</div><div class="stat-label">Баны предложены</div></div>
+        </div>
+
         <div class="channels-grid" id="channels-grid">
           <div class="empty">Загрузка каналов…</div>
         </div>
+
+        <div class="section-head"><h2>Что произошло</h2></div>
+        <div class="card" id="overview-alerts"><div class="empty">Загрузка…</div></div>
       </div>
 
       <div class="screen" id="screen-live">
