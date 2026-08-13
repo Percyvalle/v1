@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Панель модерации — дизайн-система</title>
+<style>
+:root {
+  --l0: #0b0c10;
+  --l0-grad: radial-gradient(1200px 600px at 15% -10%, #14161c 0%, #0b0c10 45%), var(--l0);
+  --l1: #14161c;
+  --l2: #1b1e27;
+  --l3: #22252f;
+  --border: #262a35;
+  --border-soft: #1d2029;
+  --border-strong: #383d4c;
+
+  --text: #e8e9ee;
+  --text-dim: #9096a8;
+  --text-faint: #5c6275;
+
+  --accent: #6c87ff;
+  --accent-soft: #6c87ff1e;
+  --accent-text: #8fa3ff;
+  --accent-ink: #0b0c10;
+
+  --success: #3ecb8e;
+  --success-soft: #3ecb8e1c;
+  --warning: #e0a73e;
+  --warning-soft: #e0a73e1c;
+  --danger: #f0546b;
+  --danger-soft: #f0546b1e;
+  --info: #6c9bff;
+  --info-soft: #6c9bff1c;
+
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -10px rgba(0,0,0,.55);
+  --ease: cubic-bezier(.22,1,.36,1);
+  --mono: "Fira Code", "SF Mono", "Cascadia Code", Consolas, monospace;
+  --sans: "Fira Sans", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--l0-grad); background-attachment: fixed; color: var(--text);
+  font-family: var(--sans); font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+}
+.shell { display: flex; min-height: 100vh; }
+
+.rail {
+  width: 220px; flex: none; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  padding: 24px 16px; border-right: 1px solid var(--border-soft);
+}
+.rail-title { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 4px; }
+.rail-sub { font-size: 15px; font-weight: 700; margin-bottom: 22px; }
+.rail nav { display: flex; flex-direction: column; gap: 2px; }
+.rail a {
+  color: var(--text-dim); text-decoration: none; font-size: 13px; padding: 7px 10px; border-radius: var(--radius-sm);
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.rail a:hover { background: var(--l2); color: var(--text); }
+.rail-divider { height: 1px; background: var(--border-soft); margin: 14px 0; }
+
+main { flex: 1; min-width: 0; padding: 48px 56px 120px; max-width: 1180px; }
+
+.doc-kicker { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 12px; }
+.doc-title { font-size: 36px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 14px; text-wrap: balance; }
+.doc-sub { font-size: 16px; color: var(--text-dim); max-width: 640px; margin: 0 0 24px; }
+.doc-meta { display: flex; gap: 20px; font-size: 12.5px; color: var(--text-faint); font-family: var(--mono); margin-bottom: 60px; }
+
+section { margin-bottom: 64px; scroll-margin-top: 24px; }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 8px; }
+h2 { font-size: 24px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 8px; }
+.section-desc { color: var(--text-dim); max-width: 680px; margin: 0 0 28px; font-size: 14.5px; }
+
+.card { background: var(--l1); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 18px; box-shadow: var(--shadow-card); }
+
+/* -------- палитра -------- */
+.swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.swatch { border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border-soft); }
+.swatch-color { height: 64px; }
+.swatch-label { padding: 9px 11px; background: var(--l1); }
+.swatch-name { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+.swatch-hex { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+
+/* -------- типографика -------- */
+.type-row { display: flex; align-items: baseline; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--border-soft); }
+.type-row:last-child { border-bottom: none; }
+.type-label { width: 140px; flex: none; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.type-sample { flex: 1; }
+
+/* -------- компонентная витрина -------- */
+.showcase { display: flex; flex-direction: column; gap: 20px; }
+.showcase-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.showcase-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; font-weight: 600; }
+
+.btn {
+  border: none; border-radius: var(--radius-sm); padding: 7px 14px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; transition: filter .15s var(--ease);
+}
+.btn:hover { filter: brightness(1.12); }
+.btn-danger { background: var(--danger); color: #2a0508; }
+.btn-warning { background: var(--warning); color: var(--accent-ink); }
+.btn-ghost { background: var(--l2); color: var(--text-dim); border: 1px solid var(--border); }
+.btn-accent { background: var(--accent); color: var(--accent-ink); }
+
+.risk-badge { font-family: var(--mono); font-weight: 700; font-size: 13px; padding: 3px 9px; border-radius: var(--radius-sm); }
+.risk-badge.low { background: var(--info-soft); color: var(--info); }
+.risk-badge.medium { background: var(--warning-soft); color: var(--warning); }
+.risk-badge.high { background: var(--danger-soft); color: var(--danger); }
+
+.chip { font-size: 11.5px; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--l2); color: var(--text-dim); border: 1px solid var(--border); }
+
+.trust-tag { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--l2); color: var(--text-dim); border: 1px solid var(--border); }
+.trust-tag.trusted { background: var(--success-soft); color: var(--success); border-color: transparent; }
+.trust-tag.regular { background: var(--info-soft); color: var(--info); border-color: transparent; }
+
+/* -------- пример структуры навигации -------- */
+.nav-mock { display: flex; border: 1px solid var(--border-soft); border-radius: var(--radius-md); overflow: hidden; }
+.nav-mock-side { width: 210px; flex: none; background: var(--l1); padding: 16px 12px; }
+.nav-mock-main { flex: 1; background: var(--l2); padding: 20px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 12.5px; }
+.nav-group-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); padding: 12px 10px 6px; }
+.nav-group-label:first-child { padding-top: 0; }
+.nav-item-mock {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--text-dim); margin-bottom: 1px;
+}
+.nav-item-mock.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.nav-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; flex: none; }
+
+/* -------- правила -------- */
+.rule-list { display: flex; flex-direction: column; gap: 14px; }
+.rule {
+  display: flex; gap: 14px; padding: 16px 18px; background: var(--l1); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.rule-num { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent-text); flex: none; width: 20px; }
+.rule-body b { display: block; font-size: 14px; margin-bottom: 4px; }
+.rule-body span { font-size: 13px; color: var(--text-dim); line-height: 1.55; }
+.rule-body code { font-family: var(--mono); font-size: 12px; background: var(--l2); padding: 1px 5px; border-radius: 4px; color: var(--accent-text); }
+
+/* -------- сравнение "было / станет" -------- */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.compare-col { }
+.compare-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+.compare-label.before { color: var(--text-faint); }
+.compare-label.after { color: var(--success); }
+
+table.status-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.status-table th {
+  text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--border-strong);
+}
+table.status-table td { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); color: var(--text-dim); }
+table.status-table tr:last-child td { border-bottom: none; }
+.status-table .comp-name { color: var(--text); font-weight: 600; }
+.status-pill { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
+.status-pill.live { background: var(--success-soft); color: var(--success); }
+.status-pill.planned { background: var(--warning-soft); color: var(--warning); }
+
+.note { font-size: 13px; color: var(--text-dim); background: var(--l1); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 14px 18px; line-height: 1.6; margin-top: 16px; }
+.note b { color: var(--text); }
+
+footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border-soft); color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
+
+@media (max-width: 900px) {
+  .rail { display: none; }
+  main { padding: 32px 24px 80px; }
+  .compare { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-title">CigilBot</div>
+    <div class="rail-sub">Дизайн-система панели</div>
+    <nav>
+      <a href="#principles">Принципы</a>
+      <a href="#language">Язык интерфейса</a>
+      <a href="#palette">Палитра</a>
+      <a href="#type">Типографика</a>
+      <a href="#components">Компоненты</a>
+      <div class="rail-divider"></div>
+      <a href="#navigation">Структура навигации</a>
+      <a href="#status">Что уже работает</a>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="doc-kicker">Референс · зафиксировано 13.08.2026</div>
+    <h1 class="doc-title">Панель модерации — дизайн-система</h1>
+    <p class="doc-sub">Не новый макет — фиксация того, что уже работает на живой панели (порт 8766), плюс
+    скорректированная структура навигации из <code style="font-family:var(--mono);color:var(--accent-text);">docs/panel-redesign-concept.html</code>.
+    Каждый новый экран (начиная с Trusted Users) следует этому документу, а не изобретает стиль заново.</p>
+    <div class="doc-meta">
+      <span>Источник токенов: panel/static/moderation.html</span>
+      <span>Живая палитра ≈ редизайн-концепт</span>
+    </div>
+
+    <section id="principles">
+      <div class="eyebrow">Зачем этот документ</div>
+      <h2>Что здесь зафиксировано</h2>
+      <div class="rule-list">
+        <div class="rule">
+          <div class="rule-num">1</div>
+          <div class="rule-body"><b>Токены живой панели — источник правды, не редизайн-концепта</b><span>Палитра в <code>moderation.html</code> и в <code>panel-redesign-concept.html</code> совпадают почти один в один (тот же <code>#6c87ff</code>). Расхождений нет — фиксируем то, что уже проверено на живых каналах.</span></div>
+        </div>
+        <div class="rule">
+          <div class="rule-num">2</div>
+          <div class="rule-body"><b>Структура навигации — из редизайн-концепта, скорректированная</b><span>Плоский список вкладок в живой панели заменяется на группировку Live / Analytics / Users / Automation / Settings — см. раздел «Структура навигации» ниже.</span></div>
+        </div>
+        <div class="rule">
+          <div class="rule-num">3</div>
+          <div class="rule-body"><b>Правило языка — явное, не подразумеваемое</b><span>См. следующий раздел. Раньше это было негласным соглашением; здесь — зафиксированное правило.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="language">
+      <div class="eyebrow">Правило</div>
+      <h2>Язык интерфейса</h2>
+      <p class="section-desc">Граница проходит по экрану: что видит оператор в браузере — русский, что видит только код — английский.</p>
+      <div class="compare">
+        <div class="compare-col">
+          <div class="compare-label after">Русский — весь user-facing текст</div>
+          <div class="card">
+            <div class="note" style="margin-top:0;">Заголовки экранов, кнопки, подписи полей, сообщения об ошибках, пустые состояния, тексты уведомлений (toast), подписи в модалках подтверждения. Всё, что читает оператор или модератор в браузере.</div>
+          </div>
+        </div>
+        <div class="compare-col">
+          <div class="compare-label before">Английский — весь код</div>
+          <div class="card">
+            <div class="note" style="margin-top:0;">CSS-классы (<code>.cluster-card</code>, <code>.risk-badge</code>), имена переменных и функций в JS/Python, имена файлов, названия таблиц и колонок БД, ключи конфигурации. Уже так во всём проекте — не меняем.</div>
+          </div>
+        </div>
+      </div>
+      <div class="note">
+        <b>Это уже так на практике</b> — "Кластеры и лента", "Все пользователи", "В эфире · 34 зрителя" в живой
+        панели уже на русском. Документ делает это правило явным, а не гадаемым по прецеденту, и добавляет его
+        в чек-лист перед публикацией любого нового текста в UI (см. <code>stop-slop</code> в CLAUDE.md — тот же
+        принцип для кода, здесь — для видимого текста).
+      </div>
+    </section>
+
+    <section id="palette">
+      <div class="eyebrow">Токены</div>
+      <h2>Палитра</h2>
+      <p class="section-desc">Многослойная тёмная база (l0–l3) + акцент, не завязанный на семантику риска.
+      Панель работает часами на фоне — тёмная база выбрана для этого, не из стиля.</p>
+      <div class="swatch-grid">
+        <div class="swatch"><div class="swatch-color" style="background:var(--l0);"></div><div class="swatch-label"><div class="swatch-name">--l0</div><div class="swatch-hex">#0b0c10</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--l1);"></div><div class="swatch-label"><div class="swatch-name">--l1</div><div class="swatch-hex">#14161c</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--l2);"></div><div class="swatch-label"><div class="swatch-name">--l2</div><div class="swatch-hex">#1b1e27</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--l3);"></div><div class="swatch-label"><div class="swatch-name">--l3</div><div class="swatch-hex">#22252f</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--accent);"></div><div class="swatch-label"><div class="swatch-name">--accent</div><div class="swatch-hex">#6c87ff</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--success);"></div><div class="swatch-label"><div class="swatch-name">--success</div><div class="swatch-hex">#3ecb8e</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--warning);"></div><div class="swatch-label"><div class="swatch-name">--warning</div><div class="swatch-hex">#e0a73e</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--danger);"></div><div class="swatch-label"><div class="swatch-name">--danger</div><div class="swatch-hex">#f0546b</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:var(--info);"></div><div class="swatch-label"><div class="swatch-name">--info</div><div class="swatch-hex">#6c9bff</div></div></div>
+      </div>
+      <div class="note">
+        <b>success/warning/danger/info — семантика риска, отдельная от --accent.</b> Акцент отмечает
+        интерактивность и выбранное состояние (активная вкладка, фокус); риск-цвета отмечают уровень угрозы
+        (низкий/средний/высокий кластер, TIMEOUT/BAN). Смешивать их — терять сигнал: если акцент и danger
+        совпадут, "выбрано" и "опасно" перестанут различаться на экране.
+      </div>
+    </section>
+
+    <section id="type">
+      <div class="eyebrow">Токены</div>
+      <h2>Типографика</h2>
+      <div class="card">
+        <div class="type-row"><div class="type-label">--sans</div><div class="type-sample" style="font-size:15px;">Fira Sans — весь читаемый текст, заголовки и подписи</div></div>
+        <div class="type-row"><div class="type-label">--mono</div><div class="type-sample" style="font-family:var(--mono);font-size:13px;">Fira Code — числа, ID, risk-score, метки времени</div></div>
+        <div class="type-row"><div class="type-label">Заголовок экрана</div><div class="type-sample" style="font-size:16px;font-weight:700;">Live — активные кластеры</div></div>
+        <div class="type-row"><div class="type-label">Заголовок карточки</div><div class="type-sample" style="font-size:13px;font-weight:700;">Attack Mode</div></div>
+        <div class="type-row"><div class="type-label">Тело</div><div class="type-sample" style="font-size:13.5px;color:var(--text-dim);">Основной текст карточек и описаний</div></div>
+        <div class="type-row"><div class="type-label">Faint / метки</div><div class="type-sample" style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">UPPERCASE LABEL</div></div>
+      </div>
+    </section>
+
+    <section id="components">
+      <div class="eyebrow">Уже реализовано</div>
+      <h2>Компоненты</h2>
+      <p class="section-desc">Живые компоненты из <code style="font-family:var(--mono);color:var(--accent-text);">panel/static/moderation.html</code> — переиспользуются, не создаются заново под новые экраны.</p>
+      <div class="card showcase">
+        <div>
+          <div class="showcase-label">Кнопки</div>
+          <div class="showcase-row">
+            <button class="btn btn-accent">Подтвердить</button>
+            <button class="btn btn-danger">Забанить</button>
+            <button class="btn btn-warning">Таймаут</button>
+            <button class="btn btn-ghost">Отмена</button>
+          </div>
+        </div>
+        <div>
+          <div class="showcase-label">Risk-бейджи</div>
+          <div class="showcase-row">
+            <span class="risk-badge low">24</span>
+            <span class="risk-badge medium">58</span>
+            <span class="risk-badge high">91</span>
+          </div>
+        </div>
+        <div>
+          <div class="showcase-label">Сигнал-чипы</div>
+          <div class="showcase-row">
+            <span class="chip">exact_duplicate</span>
+            <span class="chip">synchronized_arrival</span>
+            <span class="chip">new_account</span>
+          </div>
+        </div>
+        <div>
+          <div class="showcase-label">Trust-теги (переиспользуются в Trusted Users)</div>
+          <div class="showcase-row">
+            <span class="trust-tag trusted">TRUSTED</span>
+            <span class="trust-tag regular">REGULAR</span>
+            <span class="trust-tag">UNKNOWN</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="navigation">
+      <div class="eyebrow">Скорректировано из редизайн-концепта</div>
+      <h2>Структура навигации</h2>
+      <p class="section-desc">Живая панель сегодня — плоский список из 9 вкладок в сайдбаре. Редизайн-концепт
+      группирует их по смыслу; переносим группировку, оставляя channel rail как есть (он уже реализован).</p>
+      <div class="compare">
+        <div class="compare-col">
+          <div class="compare-label before">Сейчас — плоский список</div>
+          <div class="nav-mock">
+            <div class="nav-mock-side">
+              <div class="nav-item-mock active"><span class="nav-dot"></span>Каналы</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Live</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Users</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Audit</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Patterns</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Attack Mode</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Content</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Stats</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Settings</div>
+            </div>
+          </div>
+        </div>
+        <div class="compare-col">
+          <div class="compare-label after">Станет — сгруппировано</div>
+          <div class="nav-mock">
+            <div class="nav-mock-side">
+              <div class="nav-item-mock active"><span class="nav-dot"></span>Каналы</div>
+              <div class="nav-group-label">Live</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Кластеры</div>
+              <div class="nav-group-label">Users</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Все пользователи</div>
+              <div class="nav-item-mock" style="color:var(--success);"><span class="nav-dot"></span>Trusted Users</div>
+              <div class="nav-group-label">Automation</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Patterns</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Attack / Giveaway</div>
+              <div class="nav-group-label">Settings</div>
+              <div class="nav-item-mock"><span class="nav-dot"></span>Канал и токен</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note">
+        <b>Trusted Users — новый пункт в группе Users</b>, не отдельный экран верхнего уровня. Данные уже есть
+        (<code>TrustLevel</code>, <code>mod_trusted</code>) — вкладка читает существующие таблицы, ничего не
+        меняет в схеме БД.
+      </div>
+    </section>
+
+    <section id="status">
+      <div class="eyebrow">Свод</div>
+      <h2>Что уже работает, что скорректировано, что новое</h2>
+      <div class="card">
+        <table class="status-table">
+          <thead><tr><th>Компонент</th><th>Статус</th><th>Комментарий</th></tr></thead>
+          <tbody>
+            <tr><td class="comp-name">Токены (палитра, типографика)</td><td><span class="status-pill live">Уже так</span></td><td>Живая панель и редизайн-концепт совпадают, фиксация без изменений</td></tr>
+            <tr><td class="comp-name">Channel rail</td><td><span class="status-pill live">Уже так</span></td><td>Реализован в живой панели (<code>#channel-rail</code>)</td></tr>
+            <tr><td class="comp-name">Компоненты (кнопки, чипы, risk-бейджи)</td><td><span class="status-pill live">Уже так</span></td><td>Переиспользуются без изменений на новых экранах</td></tr>
+            <tr><td class="comp-name">Группировка навигации</td><td><span class="status-pill planned">Скорректировано</span></td><td>Из плоского списка в группы Live/Users/Automation/Settings</td></tr>
+            <tr><td class="comp-name">Trusted Users экран</td><td><span class="status-pill planned">Новое</span></td><td>Первый экран, построенный по этому документу</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>CigilBot · Дизайн-система панели · референс, не отдельный процесс</footer>
+  </main>
+</div>
+</body>
+</html>
