@@ -431,6 +431,342 @@ class TestUpsertClusterByMembers:
         assert second_id != first_id
 
 
+class TestUpsertClusterByMembersEx:
+    """upsert_cluster_by_members_ex() — та же логика, что
+    upsert_cluster_by_members(), плюс is_new: используется движком, чтобы
+    решить, отправлять ли Discord-алерт (только на новый кластер, не на
+    каждое обновление уже известного роя — направление 01 master-plan.html)."""
+
+    async def test_first_call_reports_new(self, store: ModerationStore) -> None:
+        cluster = make_cluster(user_ids=("1", "2", "3"), logins=("a", "b", "c"))
+        cluster_id, is_new = await store.upsert_cluster_by_members_ex(cluster)
+        assert is_new is True
+        assert cluster_id > 0
+
+    async def test_overlapping_second_call_reports_not_new(self, store: ModerationStore) -> None:
+        first = make_cluster(user_ids=("1", "2", "3"), logins=("a", "b", "c"))
+        first_id, _ = await store.upsert_cluster_by_members_ex(first)
+
+        second = make_cluster(user_ids=("2", "3", "4"), logins=("b", "c", "d"))
+        second_id, is_new = await store.upsert_cluster_by_members_ex(second)
+
+        assert second_id == first_id
+        assert is_new is False
+
+    async def test_unrelated_cluster_reports_new(self, store: ModerationStore) -> None:
+        first = make_cluster(user_ids=("1", "2", "3"), logins=("a", "b", "c"))
+        await store.upsert_cluster_by_members_ex(first)
+
+        unrelated = make_cluster(user_ids=("10", "11"), logins=("x", "y"))
+        _, is_new = await store.upsert_cluster_by_members_ex(unrelated)
+
+        assert is_new is True
+
+    async def test_plain_upsert_still_returns_bare_id(self, store: ModerationStore) -> None:
+        # upsert_cluster_by_members() (без _ex) — контракт для вызывающих
+        # мест, не переписанных под кортеж (тесты выше в этом файле,
+        # engine.py::observe() до направления 01): должен остаться int.
+        cluster = make_cluster(user_ids=("1", "2"), logins=("a", "b"))
+        result = await store.upsert_cluster_by_members(cluster)
+        assert isinstance(result, int)
+
+
+class TestDiscordWebhook:
+    async def test_unconfigured_channel_returns_none(self, store: ModerationStore) -> None:
+        assert await store.get_discord_webhook() is None
+
+    async def test_set_then_get_roundtrips(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="dobriy_yura"
+        )
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+        assert config.enabled is True
+        assert config.updated_by == "dobriy_yura"
+
+    async def test_second_set_overwrites_not_duplicates(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(url="https://discord.com/a", enabled=True, updated_by="a")
+        await store.set_discord_webhook(url="https://discord.com/b", enabled=False, updated_by="b")
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.url == "https://discord.com/b"
+        assert config.enabled is False
+        cursor = await store._db.execute("SELECT COUNT(*) FROM mod_discord_webhook")
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 1
+
+    async def test_disabling_keeps_url(self, store: ModerationStore) -> None:
+        # Модератор должен уметь временно выключить алерты, не вводя адрес
+        # заново — enabled и url обновляются независимо на панели.
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=False, updated_by="a"
+        )
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.enabled is False
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+
+
+class TestGetDigestStats:
+    """Ежедневный digest (направление 01 master-plan.html) считается
+    напрямую по mod_messages/mod_verdicts/mod_clusters, не по
+    mod_stats_daily (см. докстринг DigestStats)."""
+
+    async def test_counts_messages_since_period_start(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        now = time.time()
+        old = event_factory(user_id="1", login="a", timestamp=now - 100_000)
+        recent = event_factory(user_id="2", login="b", timestamp=now - 10)
+        await store.save_message(old, fingerprint(old.text))
+        await store.save_message(recent, fingerprint(recent.text))
+
+        stats = await store.get_digest_stats(since=now - 1000)
+
+        assert stats.total_messages == 1
+
+    async def test_counts_timeout_and_ban_verdicts_separately(
+        self, store: ModerationStore
+    ) -> None:
+        now = time.time()
+        timeout_verdict = Verdict(
+            user_id="1", login="a", risk_score=60, confidence=0.6, signals=(),
+            recommended_action=Action.TIMEOUT, reason="test", timestamp=now,
+        )
+        ban_verdict = Verdict(
+            user_id="2", login="b", risk_score=90, confidence=0.9, signals=(),
+            recommended_action=Action.BAN, reason="test", timestamp=now,
+        )
+        await store.save_verdict(timeout_verdict)
+        await store.save_verdict(ban_verdict)
+        await store.save_verdict(ban_verdict)
+
+        stats = await store.get_digest_stats(since=now - 1000)
+
+        assert stats.would_timeout == 1
+        assert stats.would_ban == 2
+        assert stats.suspicious_verdicts == 3
+
+    async def test_observe_and_nothing_excluded_from_suspicious(
+        self, store: ModerationStore
+    ) -> None:
+        # OBSERVE срабатывает часто на безобидные сообщения — считать его
+        # "подозрительным" в сводке раздул бы цифру до бессмысленной.
+        now = time.time()
+        for action in (Action.OBSERVE, Action.NOTHING):
+            verdict = Verdict(
+                user_id="1", login="a", risk_score=10, confidence=0.1, signals=(),
+                recommended_action=action, reason="test", timestamp=now,
+            )
+            await store.save_verdict(verdict)
+
+        stats = await store.get_digest_stats(since=now - 1000)
+
+        assert stats.suspicious_verdicts == 0
+        assert stats.would_timeout == 0
+        assert stats.would_ban == 0
+
+    async def test_counts_new_clusters_in_period(self, store: ModerationStore) -> None:
+        now = time.time()
+        cluster = make_cluster(created_at=now)
+        await store.save_cluster(cluster)
+
+        stats = await store.get_digest_stats(since=now - 1000)
+
+        assert stats.new_clusters == 1
+
+    async def test_empty_period_returns_zeros(self, store: ModerationStore) -> None:
+        stats = await store.get_digest_stats(since=time.time())
+
+        assert stats.total_messages == 0
+        assert stats.suspicious_verdicts == 0
+        assert stats.would_timeout == 0
+        assert stats.would_ban == 0
+        assert stats.new_clusters == 0
+
+
+class TestMarkDigestSent:
+    async def test_sets_last_digest_sent_at(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        await store.mark_digest_sent(sent_at=12345.0)
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.last_digest_sent_at == 12345.0
+
+    async def test_default_before_any_digest_is_none(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.last_digest_sent_at is None
+
+    async def test_does_not_touch_url_or_enabled(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        await store.mark_digest_sent(sent_at=999.0)
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+        assert config.enabled is True
+
+
+class TestCountRecentNewClusters:
+    """Эскалация при повторных атаках (направление 01 master-plan.html)
+    считает НОВЫЕ кластеры — created_at пишется только save_cluster(), рост
+    уже существующего кластера новыми участниками (upsert по общим
+    user_id) сюда не попадает."""
+
+    async def test_counts_clusters_created_since(self, store: ModerationStore) -> None:
+        now = time.time()
+        old = make_cluster(created_at=now - 100_000)
+        recent1 = make_cluster(user_ids=("10", "11"), logins=("x", "y"), created_at=now - 10)
+        recent2 = make_cluster(user_ids=("20", "21"), logins=("p", "q"), created_at=now - 5)
+        await store.save_cluster(old)
+        await store.save_cluster(recent1)
+        await store.save_cluster(recent2)
+
+        count = await store.count_recent_new_clusters(since=now - 1000)
+
+        assert count == 2
+
+    async def test_growth_of_existing_cluster_not_double_counted(
+        self, store: ModerationStore
+    ) -> None:
+        now = time.time()
+        first = make_cluster(user_ids=("1", "2"), logins=("a", "b"), created_at=now)
+        await store.upsert_cluster_by_members_ex(first)
+        grown = make_cluster(user_ids=("2", "3"), logins=("b", "c"), created_at=now)
+        await store.upsert_cluster_by_members_ex(grown)
+
+        count = await store.count_recent_new_clusters(since=now - 1000)
+
+        assert count == 1
+
+    async def test_no_clusters_returns_zero(self, store: ModerationStore) -> None:
+        assert await store.count_recent_new_clusters(since=time.time() - 1000) == 0
+
+
+class TestMarkEscalationSent:
+    async def test_sets_last_escalation_sent_at(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        await store.mark_escalation_sent(sent_at=54321.0)
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.last_escalation_sent_at == 54321.0
+
+    async def test_default_before_any_escalation_is_none(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.last_escalation_sent_at is None
+
+    async def test_independent_from_digest_timestamp(self, store: ModerationStore) -> None:
+        # Два разных cooldown на одной строке — не должны затирать друг
+        # друга при независимых обновлениях.
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+        await store.mark_digest_sent(sent_at=111.0)
+        await store.mark_escalation_sent(sent_at=222.0)
+
+        config = await store.get_discord_webhook()
+
+        assert config is not None
+        assert config.last_digest_sent_at == 111.0
+        assert config.last_escalation_sent_at == 222.0
+
+
+class TestSetAlertConfidenceThreshold:
+    """Порог confidence для Discord-алерта (направление 01 master-plan.html)
+    настраивается per-channel, не жёсткая константа в engine.py."""
+
+    async def test_default_is_point_nine(self, store: ModerationStore) -> None:
+        config = await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+        assert config.alert_confidence_threshold == 0.9
+
+    async def test_updates_threshold(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        await store.set_alert_confidence_threshold(threshold=0.7)
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.alert_confidence_threshold == 0.7
+
+    async def test_does_not_touch_url_or_enabled(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        await store.set_alert_confidence_threshold(threshold=0.5)
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+        assert config.enabled is True
+
+    async def test_rejects_out_of_range_threshold(self, store: ModerationStore) -> None:
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            await store.set_alert_confidence_threshold(threshold=1.5)
+
+    async def test_raises_when_webhook_not_configured(self, store: ModerationStore) -> None:
+        with pytest.raises(ValueError, match="ещё не настроен"):
+            await store.set_alert_confidence_threshold(threshold=0.7)
+
+    async def test_survives_url_change(self, store: ModerationStore) -> None:
+        # set_discord_webhook (url/enabled) не должен затирать порог,
+        # выставленный отдельным вызовом — независимые настройки.
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="a"
+        )
+        await store.set_alert_confidence_threshold(threshold=0.6)
+
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/2/xyz", enabled=True, updated_by="a"
+        )
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.alert_confidence_threshold == 0.6
+
+
 class TestGetClusterMemberIds:
     async def test_returns_current_members(self, store: ModerationStore) -> None:
         cluster = make_cluster(user_ids=("1", "2", "3"), logins=("a", "b", "c"))

@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from cigilbot.executor import parse_payload
 from cigilbot.registry_store import RegistryStore
 from cigilbot.store import ModerationStore, PatternInput
+from cigilbot.types import ContentCategory
 from panel.auth import require_authenticated, role_for_profile
 from paths import MOD_VAR, REGISTRY_DB, REPO_ROOT
 
@@ -172,6 +173,51 @@ async def api_list_users(
     store = await _open_store(profile)
     try:
         return await store.list_users(search=search, limit=limit, offset=offset)
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Paste Wipe — ручная зачистка волны копипасты (пользователь 2026-08-13:
+# сценарий "стример недоволен, что весь чат кидает одну и ту же пасту").
+# Модератор вставляет образец текста, панель показывает превью найденных
+# совпадений за окно поиска, дальше исполнение идёт через уже существующий
+# /actions с action="TIMEOUT" и списком найденных user_id — отдельного
+# execute-эндпоинта нет специально, чтобы не дублировать логику постановки
+# в очередь/аудита, которая уже есть в api_enqueue_action.
+# ---------------------------------------------------------------------------
+
+PASTE_WAVE_WINDOW_SECONDS = 120.0
+
+
+@router.get("/recent_messages")
+async def api_list_recent_messages(
+    profile: str = "main",
+    limit: int = 15,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> list[dict[str, object]]:
+    """Последние сообщения чата для клика "вставить как образец пасты"
+    (см. store.list_recent_messages — избегает ручного копирования из
+    внешнего чат-виджета, которое цепляло мусор вроде ника)."""
+    store = await _open_store(profile)
+    try:
+        return await store.list_recent_messages(limit=limit)
+    finally:
+        await store.close()
+
+
+@router.get("/paste_wave")
+async def api_find_paste_wave(
+    sample_text: str,
+    profile: str = "main",
+    window_seconds: float = PASTE_WAVE_WINDOW_SECONDS,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> list[dict[str, object]]:
+    if not sample_text.strip():
+        raise HTTPException(status_code=400, detail="Введите текст пасты для поиска")
+    store = await _open_store(profile)
+    try:
+        return await store.find_paste_wave(sample_text=sample_text, window_seconds=window_seconds)
     finally:
         await store.close()
 
@@ -522,6 +568,242 @@ async def api_delete_pattern(
 
 
 # ---------------------------------------------------------------------------
+# Content Rules — словарный детектор (Rule Engine, cigilbot/content/).
+#
+# РЕЖИМ НАБЛЮДАТЕЛЯ: content_moderation_enabled управляет только тем, что
+# записывает content_policy.decide_content() в аудит (mod_content_events) —
+# executor.py ничего из этого не читает и не исполняет ни при каком
+# значении переключателя (см. ModerationEngine._check_content). Включение
+# здесь не запускает реальные таймауты/баны сейчас; когда это изменится,
+# понадобится отдельная явная фича, не флаг ниже.
+#
+# Синхронизация с движком, как у Pattern Library/Attack Mode — панель не
+# имеет прямого доступа к запущенному движку (отдельный процесс), поэтому
+# reload_content_rules()/sync_content_settings() вызывает поллер в
+# cigilbot/pipeline.py, не этот роутер.
+# ---------------------------------------------------------------------------
+
+
+class ContentRuleRequest(BaseModel):
+    profile: str = "main"
+    category: str
+    phrase: str
+
+
+@router.get("/content_rules")
+async def api_list_content_rules(
+    profile: str = "main", session: tuple[str, str] = Depends(require_authenticated)
+) -> list[dict[str, object]]:
+    store = await _open_store(profile)
+    try:
+        rules = await store.list_content_rules()
+    finally:
+        await store.close()
+    return [
+        {"id": r.id, "category": r.category.value, "phrase": r.phrase, "enabled": r.enabled}
+        for r in rules
+    ]
+
+
+@router.post("/content_rules")
+async def api_add_content_rule(
+    request: Request,
+    payload: ContentRuleRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    _global_role, login = session
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    try:
+        category = ContentCategory(payload.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Неизвестная категория: {payload.category}") from exc
+
+    store = await _open_store(payload.profile)
+    try:
+        try:
+            rule = await store.add_content_rule(category=category, phrase=payload.phrase, created_by=login)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await store.close()
+    return {"id": rule.id, "category": rule.category.value, "phrase": rule.phrase}
+
+
+class SetContentRuleEnabledRequest(BaseModel):
+    profile: str = "main"
+    enabled: bool
+
+
+@router.post("/content_rules/{rule_id}/enabled")
+async def api_set_content_rule_enabled(
+    request: Request,
+    rule_id: int,
+    payload: SetContentRuleEnabledRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    store = await _open_store(payload.profile)
+    try:
+        await store.set_content_rule_enabled(rule_id, payload.enabled)
+    finally:
+        await store.close()
+    return {"id": rule_id, "enabled": payload.enabled}
+
+
+class DeleteContentRuleRequest(BaseModel):
+    profile: str = "main"
+
+
+@router.post("/content_rules/{rule_id}/delete")
+async def api_delete_content_rule(
+    request: Request,
+    rule_id: int,
+    payload: DeleteContentRuleRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    store = await _open_store(payload.profile)
+    try:
+        await store.delete_content_rule(rule_id)
+    finally:
+        await store.close()
+    return {"id": rule_id, "deleted": True}
+
+
+class SetContentModerationEnabledRequest(BaseModel):
+    profile: str = "main"
+    enabled: bool
+
+
+@router.get("/content_settings")
+async def api_get_content_settings(
+    profile: str = "main", session: tuple[str, str] = Depends(require_authenticated)
+) -> dict[str, object]:
+    store = await _open_store(profile)
+    try:
+        settings = await store.get_content_settings()
+    finally:
+        await store.close()
+    return settings.to_dict()
+
+
+@router.post("/content_settings")
+async def api_set_content_moderation_enabled(
+    request: Request,
+    payload: SetContentModerationEnabledRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    _global_role, login = session
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    store = await _open_store(payload.profile)
+    try:
+        await store.set_content_moderation_enabled(payload.enabled, updated_by=login)
+        settings = await store.get_content_settings()
+    finally:
+        await store.close()
+    return settings.to_dict()
+
+
+@router.get("/content_events")
+async def api_list_content_events(
+    profile: str = "main",
+    limit: int = 50,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> list[dict[str, object]]:
+    """Лента срабатываний словарного детектора для панели — отдельно от
+    /verdicts, т.к. content-события не имеют risk_score/confidence/signals
+    (см. докстринг миграции 014)."""
+    store = await _open_store(profile)
+    try:
+        return await store.list_content_events(limit=limit)
+    finally:
+        await store.close()
+
+
+class MarkContentEventManualActionRequest(BaseModel):
+    profile: str = "main"
+    action: str
+
+
+@router.post("/content_events/{event_id}/manual_action")
+async def api_mark_content_event_manual_action(
+    request: Request,
+    event_id: int,
+    payload: MarkContentEventManualActionRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    """Пометить строку ленты Content разобранной вручную (пользователь
+    2026-08-13: "можем как-то помечать сообщения... более тусклым делать").
+    Не исполняет действие само — панель зовёт /actions отдельно, эта
+    пометка чисто визуальная, поэтому роль та же, что у /actions (MODERATOR+),
+    не строже: если модератору можно нажать TIMEOUT/BAN, ему можно и
+    оставить об этом след в ленте."""
+    _global_role, actor = session
+    role = await role_for_profile(request, payload.profile)
+    require_role(role, "MODERATOR")
+
+    if payload.action not in ("TIMEOUT", "BAN", "DELETE_MESSAGES"):
+        raise HTTPException(status_code=400, detail=f"Неизвестное действие: {payload.action!r}")
+
+    store = await _open_store(payload.profile)
+    try:
+        await store.mark_content_event_manual_action(event_id, action=payload.action, actor=actor)
+    finally:
+        await store.close()
+    return {"id": event_id, "manual_action": payload.action}
+
+
+CONTENT_WS_POLL_INTERVAL_SECONDS = 2.0
+
+
+@router.websocket("/content_ws")
+async def ws_content_events(websocket: WebSocket) -> None:
+    """Живая лента срабатываний Rule Engine — отдельный канал от /ws
+    (пользователь 2026-08-13: "не хочу смешивать спам атаку и модерацию
+    вместе"). Тот же poll-через-WebSocket паттерн, что /ws: клиент
+    получает свежий снимок раз в CONTENT_WS_POLL_INTERVAL_SECONDS, а не
+    push по событию — сервер не хранит подписчиков между запросами
+    (см. ws_moderation), так что новый событийный broadcast не нужен."""
+    import asyncio
+    import json
+
+    from panel.auth import SESSION_KEY
+
+    if websocket.session.get(SESSION_KEY) is None:
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    profile = "main"
+    try:
+        first = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+        if first:
+            profile = first.strip() or "main"
+    except (TimeoutError, WebSocketDisconnect):
+        pass
+
+    try:
+        while True:
+            path = _db_path(profile)
+            if not path.exists():
+                await websocket.send_text(json.dumps({"events": []}))
+                await asyncio.sleep(CONTENT_WS_POLL_INTERVAL_SECONDS)
+                continue
+
+            store = ModerationStore(str(path))
+            await store.connect()
+            try:
+                events = await store.list_content_events(limit=50)
+            finally:
+                await store.close()
+
+            await websocket.send_text(json.dumps({"events": events}))
+            await asyncio.sleep(CONTENT_WS_POLL_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Attack Mode (этап 9c, раздел 11 ТЗ риск #16). Активация требует ADMIN+ —
 # выше порог, чем обычные MODERATOR-действия, т.к. снижает пороги
 # детекции для ВСЕГО канала, а не для одного кластера/пользователя.
@@ -665,6 +947,98 @@ async def api_get_giveaway_mode(
     if status is None:
         return {"active": False}
     return {"active": True, **status.to_dict()}
+
+
+# ---------------------------------------------------------------------------
+# Discord-webhook (направление 01 master-plan.html). Меняет ADMIN+, той же
+# логикой, что Attack/Giveaway Mode — влияет на весь канал, не на один
+# кластер. GET маскирует url (как токены в Settings): читающий видит, что
+# webhook настроен и на что похож, но не может скопировать его целиком из
+# ответа API — сам адрес секрет ровно в том же смысле, что API-ключ.
+# ---------------------------------------------------------------------------
+
+_WEBHOOK_VISIBLE_SUFFIX = 6
+
+
+def _mask_webhook_url(url: str) -> str:
+    if len(url) <= _WEBHOOK_VISIBLE_SUFFIX:
+        return "•" * len(url)
+    return "•" * (len(url) - _WEBHOOK_VISIBLE_SUFFIX) + url[-_WEBHOOK_VISIBLE_SUFFIX:]
+
+
+class SetDiscordWebhookRequest(BaseModel):
+    profile: str = "main"
+    url: str
+    enabled: bool = True
+
+
+@router.post("/discord_webhook")
+async def api_set_discord_webhook(
+    request: Request,
+    payload: SetDiscordWebhookRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    _global_role, login = session
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    if payload.enabled and not payload.url.startswith("https://discord.com/api/webhooks/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Неверный адрес — Discord-webhook начинается с https://discord.com/api/webhooks/",
+        )
+
+    store = await _open_store(payload.profile)
+    try:
+        config = await store.set_discord_webhook(
+            url=payload.url, enabled=payload.enabled, updated_by=login
+        )
+    finally:
+        await store.close()
+    return {**config.to_dict(), "url": _mask_webhook_url(config.url)}
+
+
+@router.get("/discord_webhook")
+async def api_get_discord_webhook(
+    profile: str = "main", session: tuple[str, str] = Depends(require_authenticated)
+) -> dict[str, object]:
+    store = await _open_store(profile)
+    try:
+        config = await store.get_discord_webhook()
+    finally:
+        await store.close()
+    if config is None:
+        return {"configured": False}
+    return {"configured": True, **config.to_dict(), "url": _mask_webhook_url(config.url)}
+
+
+class SetAlertThresholdRequest(BaseModel):
+    profile: str = "main"
+    threshold: float
+
+
+@router.post("/discord_webhook/alert_threshold")
+async def api_set_alert_threshold(
+    request: Request,
+    payload: SetAlertThresholdRequest,
+    session: tuple[str, str] = Depends(require_authenticated),
+) -> dict[str, object]:
+    """Порог confidence, выше которого новый кластер шлёт Discord-алерт —
+    настраивается отдельно от самого webhook (адрес и чувствительность
+    меняются независимо, см. store.set_alert_confidence_threshold)."""
+    require_role(await role_for_profile(request, payload.profile), "ADMIN")
+    if not 0.0 <= payload.threshold <= 1.0:
+        raise HTTPException(status_code=400, detail="Порог должен быть от 0 до 1")
+
+    store = await _open_store(payload.profile)
+    try:
+        try:
+            await store.set_alert_confidence_threshold(threshold=payload.threshold)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config = await store.get_discord_webhook()
+    finally:
+        await store.close()
+    assert config is not None
+    return {**config.to_dict(), "url": _mask_webhook_url(config.url)}
 
 
 # ---------------------------------------------------------------------------

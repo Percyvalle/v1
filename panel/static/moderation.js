@@ -8,14 +8,28 @@
 // означает "сессия истекла или не было входа" — показываем экран логина.
 
 const state = {
-  profile: localStorage.getItem("mod.profile") || "main",
   role: "VIEWER",
   login: "",
   ws: null,
   wsRetryMs: 1000,
+  contentWs: null,
 };
 
 const el = (id) => document.getElementById(id);
+
+// Единственный источник истины для "какой канал сейчас выбран" —
+// <select id="profile-select">.value, не отдельная переменная в state.
+// Раньше "текущий канал" хранился отдельно в state.profile и синхронизировался вручную в
+// 5 разных местах (loadProfiles, selectChannel, deep-link, клик по карточке,
+// change на select) — расхождение между тем, что видел пользователь в
+// интерфейсе, и тем, что реально уходило на сервер, было вопросом времени:
+// действие подтверждалось для одного канала, а исполнялось на другом
+// (2026-08-13, "почему не находит пасту" → таймаут ушёл не на тот канал,
+// который был на экране). currentProfile() читает DOM напрямую в момент
+// вызова — то, что видит глаз, физически совпадает с тем, что отправляется.
+function currentProfile() {
+  return el("profile-select").value || localStorage.getItem("mod.profile") || "main";
+}
 
 // Человекочитаемые названия сигналов детекторов (см. config/moderation.yml
 // для полного списка и весов) — движок и API работают с английскими
@@ -126,11 +140,17 @@ async function apiFetch(url, options = {}) {
 
 // --- профили ----------------------------------------------------------
 
+// Кэш последнего списка профилей — используется и рядом-стоящей выпадашкой
+// (id="profile-select"), и channel-rail, и экраном "Каналы", чтобы не запрашивать
+// /api/moderation/profiles трижды при каждой навигации.
+let lastProfiles = [];
+
 async function loadProfiles() {
   const select = el("profile-select");
   try {
     const resp = await fetch("/api/moderation/profiles");
     const profiles = await resp.json();
+    lastProfiles = profiles;
     select.innerHTML = "";
     for (const p of profiles) {
       const opt = document.createElement("option");
@@ -142,25 +162,176 @@ async function loadProfiles() {
       opt.textContent = p.channel && p.channel !== p.profile ? `${p.channel} (${p.profile})` : p.channel || p.profile;
       select.appendChild(opt);
     }
-    if (profiles.some((p) => p.profile === state.profile)) {
-      select.value = state.profile;
+    const savedProfile = localStorage.getItem("mod.profile");
+    if (savedProfile && profiles.some((p) => p.profile === savedProfile)) {
+      select.value = savedProfile;
     } else if (profiles.length) {
-      state.profile = profiles[0].profile;
-      select.value = state.profile;
+      select.value = profiles[0].profile;
     }
+    localStorage.setItem("mod.profile", select.value);
+    await renderChannelRail(profiles);
   } catch {
     select.innerHTML = '<option value="main">main</option>';
   }
 }
 
+// --- channel rail --------------------------------------------------------
+// Переключение канала без захода в отдельный экран — виден на каждом
+// экране панели, не только на "Каналы". Сам переход дублирует то, что
+// раньше делала только смена <select id="profile-select">.
+async function renderChannelRail(profiles) {
+  const rail = el("rail-channels");
+  rail.innerHTML = "";
+  // Статус запрашивается сразу для всех каналов параллельно — иначе точка
+  // навсегда остаётся серой-по-умолчанию (баг: индикатор рисовался, но
+  // ничем не красился, см. .rail-dot без модификатора в исходной версии).
+  const statuses = await Promise.all(
+    profiles.map((p) =>
+      fetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(p.profile)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)
+    )
+  );
+  for (let i = 0; i < profiles.length; i++) {
+    const p = profiles[i];
+    const attack = statuses[i];
+    const label = p.channel || p.profile;
+    const btn = document.createElement("div");
+    btn.className = `rail-channel${p.profile === currentProfile() ? " active" : ""}`;
+    btn.title = label;
+    btn.setAttribute("role", "button");
+    btn.setAttribute("tabindex", "0");
+    const dotClass = attack && attack.active ? "attack" : "live";
+    btn.innerHTML = `${escapeHtml(label.slice(0, 2).toUpperCase())}<span class="rail-dot ${dotClass}"></span>`;
+    const select = () => selectChannel(p.profile);
+    btn.addEventListener("click", select);
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        select();
+      }
+    });
+    rail.appendChild(btn);
+  }
+}
+
+function selectChannel(profile) {
+  el("profile-select").value = profile;
+  localStorage.setItem("mod.profile", profile);
+  connectWs();
+  loadAudit();
+  document.querySelectorAll(".rail-channel").forEach((n, i) => n.classList.toggle("active", lastProfiles[i]?.profile === profile));
+  switchScreen("live");
+}
+
+el("rail-home").addEventListener("click", () => switchScreen("channels"));
+el("rail-home").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    switchScreen("channels");
+  }
+});
+
+// --- deep-link из Discord-алерта (направление 01 master-plan.html) -------
+// /moderation?channel=X&cluster=Y — открывает Live нужного канала и
+// подсвечивает нужный кластер, чтобы не искать вручную среди нескольких
+// каналов. channel в ссылке — login (человекочитаемый, тот же, что в
+// embed'е), а не broadcaster_id: панель хранит канал по login-у в
+// lastProfiles, здесь резолвим одно в другое.
+
+let pendingHighlightClusterId = null;
+
+function applyDeepLinkFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const channel = params.get("channel");
+  const clusterParam = params.get("cluster");
+  if (!channel) return;
+
+  const match = lastProfiles.find((p) => p.channel === channel);
+  if (!match) {
+    toast(`Канал "${channel}" не найден в списке подключённых`, "error");
+    return;
+  }
+
+  pendingHighlightClusterId = clusterParam ? Number(clusterParam) : null;
+  selectChannel(match.profile);
+}
+
+function highlightClusterIfPending() {
+  if (pendingHighlightClusterId === null) return;
+  const card = document.querySelector(`.cluster-card[data-cluster-id="${pendingHighlightClusterId}"]`);
+  pendingHighlightClusterId = null;
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("cluster-card-highlight");
+  setTimeout(() => card.classList.remove("cluster-card-highlight"), 2600);
+}
+
+// --- экран "Каналы" -------------------------------------------------------
+
+async function loadChannels() {
+  const grid = el("channels-grid");
+  if (!lastProfiles.length) {
+    grid.innerHTML = '<div class="empty">Каналов пока нет — добавьте канал в Channel Registry</div>';
+    return;
+  }
+  grid.innerHTML = '<div class="empty">Загрузка…</div>';
+  const cards = await Promise.all(
+    lastProfiles.map(async (p) => {
+      let attack = null;
+      try {
+        const resp = await fetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(p.profile)}`);
+        if (resp.ok) attack = await resp.json();
+      } catch {
+        // недоступность одного канала не должна валить весь экран
+      }
+      return { profile: p, attack };
+    })
+  );
+  grid.innerHTML = "";
+  for (const { profile: p, attack } of cards) {
+    const label = p.channel || p.profile;
+    const card = document.createElement("div");
+    card.className = "channel-card";
+    const statusPill = attack && attack.active
+      ? '<span class="channel-status-pill" style="background:var(--danger-soft);color:var(--danger);">Attack Mode</span>'
+      : '<span class="channel-status-pill running">Активен</span>';
+    card.innerHTML = `
+      <div class="channel-card-head">
+        <div class="channel-card-title">
+          <div class="channel-avatar">${escapeHtml(label.slice(0, 2).toUpperCase())}</div>
+          <div>
+            <div class="channel-name">${escapeHtml(label)}</div>
+            <div class="channel-id">${escapeHtml(p.profile)}</div>
+          </div>
+        </div>
+        ${statusPill}
+      </div>
+    `;
+    card.addEventListener("click", () => selectChannel(p.profile));
+    grid.appendChild(card);
+  }
+  const addCard = document.createElement("a");
+  addCard.className = "channel-card channel-card-add";
+  addCard.href = "/bots";
+  addCard.style.textDecoration = "none";
+  addCard.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    <span style="font-size:12.5px;">Подключить канал</span>
+  `;
+  grid.appendChild(addCard);
+}
+
 // --- навигация ----------------------------------------------------------
 
 const SCREEN_TITLES = {
+  channels: "Каналы",
   live: "Live — активные кластеры",
   users: "Users — зрители канала",
   audit: "Audit — журнал действий модераторов",
   patterns: "Bot Pattern Library",
   attack: "Attack Mode",
+  content: "Content — словарный детектор",
   stats: "Stats — статистика и FP-rate",
   settings: "Settings — конфигурация и токен бота",
 };
@@ -168,7 +339,9 @@ const SCREEN_TITLES = {
 function switchScreen(name) {
   document.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.screen === name));
   document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("active", s.id === `screen-${name}`));
+  el("rail-home").classList.toggle("active", name === "channels");
   el("screen-title").textContent = SCREEN_TITLES[name] || "";
+  if (name === "channels") loadChannels();
   if (name === "users") loadUsers();
   if (name === "audit") loadAudit();
   if (name === "patterns") loadPatterns();
@@ -178,6 +351,12 @@ function switchScreen(name) {
   }
   if (name === "stats") loadStats();
   if (name === "settings") loadSettings();
+  if (name === "live") loadPasteWaveRecent();
+  if (name === "content") {
+    connectContentWs();
+  } else {
+    disconnectContentWs();
+  }
 }
 
 function canAdmin() {
@@ -204,6 +383,7 @@ function renderClusters(clusters) {
     const card = document.createElement("div");
     const cls = riskClass(c.risk_score);
     card.className = `cluster-card risk-${cls}`;
+    card.dataset.clusterId = String(c.id);
     card.innerHTML = `
       <div class="cluster-head">
         <div class="cluster-title">
@@ -331,7 +511,7 @@ async function submitSignalFeedback(verdict, signalName, rowEl, decision = "FALS
     const resp = await apiFetch("/api/moderation/feedback", {
       method: "POST",
       body: JSON.stringify({
-        profile: state.profile,
+        profile: currentProfile(),
         signal_name: signalName,
         decision,
         verdict_id: verdict.id,
@@ -386,7 +566,7 @@ function confirmClusterAction(cluster, action) {
       const resp = await apiFetch("/api/moderation/actions", {
         method: "POST",
         body: JSON.stringify({
-          profile: state.profile,
+          profile: currentProfile(),
           action,
           // target_user_ids всё ещё отправляется для точечных действий без
           // cluster_id, но сервер игнорирует это поле, когда cluster_id
@@ -417,7 +597,7 @@ async function decideCluster(clusterId, decision) {
   try {
     const resp = await apiFetch(`/api/moderation/clusters/${clusterId}/${decision}`, {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile }),
+      body: JSON.stringify({ profile: currentProfile() }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -437,7 +617,7 @@ async function markUserSafe(userId, login) {
   try {
     const resp = await apiFetch(`/api/moderation/users/${encodeURIComponent(userId)}/mark_safe`, {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile, reason: "отмечен в панели как не бот" }),
+      body: JSON.stringify({ profile: currentProfile(), reason: "отмечен в панели как не бот" }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -460,6 +640,153 @@ el("modal-confirm").addEventListener("click", async () => {
   if (fn) await fn();
 });
 
+// --- Зачистить пасту (пользователь 2026-08-13: сценарий "весь чат кидает
+// одну и ту же пасту, стримеру это не нравится") -------------------------
+
+function updatePasteWaveChannelBadge() {
+  const profile = currentProfile();
+  const match = lastProfiles.find((p) => p.profile === profile);
+  el("paste-wave-channel-badge").textContent = `канал: ${match?.channel || profile}`;
+}
+
+async function loadPasteWaveRecent() {
+  updatePasteWaveChannelBadge();
+  const container = el("paste-wave-recent");
+  try {
+    const resp = await apiFetch(`/api/moderation/recent_messages?profile=${encodeURIComponent(currentProfile())}&limit=15`);
+    if (!resp.ok) throw new Error(resp.statusText);
+    const messages = await resp.json();
+    if (messages.length === 0) {
+      container.innerHTML = '<div class="note" style="padding:8px 10px;">Сообщений пока нет</div>';
+      return;
+    }
+    // Клик на текст, а не отдельная кнопка — сообщение и так короткое, вся
+    // строка кликабельна (пользователь 2026-08-13: "нажал и паста вставилась,
+    // чтобы не копировать и вставлять").
+    container.innerHTML = messages
+      .map(
+        (m) => `
+        <div class="paste-wave-recent-row" data-text="${escapeHtml(m.text)}">
+          <span class="paste-wave-recent-login">${escapeHtml(m.login)}</span>
+          <span class="paste-wave-recent-text">${escapeHtml(m.text)}</span>
+        </div>`
+      )
+      .join("");
+  } catch (e) {
+    container.innerHTML = '<div class="note" style="padding:8px 10px;">Не удалось загрузить сообщения</div>';
+  }
+}
+
+el("paste-wave-recent").addEventListener("click", (e) => {
+  const row = e.target.closest(".paste-wave-recent-row");
+  if (!row) return;
+  // data-text экранирован через escapeHtml при рендере — берём из textContent
+  // соответствующего узла, а не из атрибута напрямую, чтобы получить текст
+  // уже РАСэкранированным (браузер сам декодирует сущности при чтении DOM).
+  const span = row.querySelector(".paste-wave-recent-text");
+  el("paste-wave-sample").value = span.textContent;
+  el("paste-wave-sample").focus();
+});
+
+let lastPasteWaveMatches = [];
+
+el("btn-find-paste-wave").addEventListener("click", async () => {
+  const sample = el("paste-wave-sample").value.trim();
+  const results = el("paste-wave-results");
+  if (!sample) {
+    toast("Вставьте текст пасты перед поиском", "error");
+    return;
+  }
+  try {
+    const resp = await apiFetch(
+      `/api/moderation/paste_wave?profile=${encodeURIComponent(currentProfile())}&sample_text=${encodeURIComponent(sample)}`
+    );
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    lastPasteWaveMatches = await resp.json();
+    renderPasteWaveResults();
+  } catch (e) {
+    toast(`Ошибка: ${e.message}`, "error");
+  }
+});
+
+function renderPasteWaveResults() {
+  const results = el("paste-wave-results");
+  if (lastPasteWaveMatches.length === 0) {
+    results.innerHTML = '<div class="note">Совпадений за последние 2 минуты не найдено.</div>';
+    return;
+  }
+  const rows = lastPasteWaveMatches
+    .map(
+      (m) => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-soft);">
+        <input type="checkbox" class="paste-wave-check" data-user-id="${escapeHtml(m.user_id)}" checked>
+        <span style="font-weight:600;">${escapeHtml(m.login)}</span>
+        <span class="cluster-meta" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(m.text)}</span>
+        <span class="cluster-meta">${Math.round(m.similarity * 100)}%</span>
+      </label>`
+    )
+    .join("");
+  const durationBtns = CONTENT_TIMEOUT_OPTIONS.map(
+    (opt) => `<button class="btn btn-ghost btn-small paste-wave-timeout" data-duration="${opt.seconds}">${opt.label}</button>`
+  ).join("");
+  results.innerHTML = `
+    <div class="note" style="margin-bottom:8px;">Найдено ${lastPasteWaveMatches.length} — снимите галочку, чтобы исключить из наказания.</div>
+    ${rows}
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+      <span class="cluster-meta">Таймаут выбранным:</span>
+      ${durationBtns}
+    </div>
+  `;
+}
+
+el("paste-wave-results").addEventListener("click", (e) => {
+  const btn = e.target.closest(".paste-wave-timeout");
+  if (!btn) return;
+  const duration = Number(btn.dataset.duration);
+  const durationLabel = CONTENT_TIMEOUT_OPTIONS.find((o) => o.seconds === duration)?.label || "10м";
+  const selectedIds = Array.from(document.querySelectorAll(".paste-wave-check:checked")).map(
+    (cb) => cb.dataset.userId
+  );
+  if (selectedIds.length === 0) {
+    toast("Выберите хотя бы одного пользователя", "error");
+    return;
+  }
+
+  el("modal-title").textContent = "Зачистить пасту — подтвердите";
+  el("modal-body").textContent =
+    `Вы собираетесь выдать таймаут на ${durationLabel} для ${selectedIds.length} ` +
+    `пользователей, написавших похожий текст. Действие попадёт в аудит от имени "${state.login}".`;
+  pendingConfirm = async () => {
+    try {
+      const resp = await apiFetch("/api/moderation/actions", {
+        method: "POST",
+        body: JSON.stringify({
+          profile: currentProfile(),
+          action: "TIMEOUT",
+          target_user_ids: selectedIds,
+          duration_seconds: duration,
+          reason: "Зачистка волны копипасты (ручное модерирование)",
+        }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || resp.statusText);
+      }
+      toast(`Таймаут выдан ${selectedIds.length} пользователям`, "success");
+      lastPasteWaveMatches = [];
+      el("paste-wave-results").innerHTML = "";
+      el("paste-wave-sample").value = "";
+      await loadPasteWaveRecent();
+    } catch (err) {
+      toast(`Ошибка: ${err.message}`, "error");
+    }
+  };
+  el("modal-overlay").classList.add("open");
+});
+
 // --- users -----------------------------------------------------------
 
 async function loadUsers() {
@@ -467,7 +794,7 @@ async function loadUsers() {
   const empty = el("users-empty");
   const search = el("users-search").value.trim();
   try {
-    const params = new URLSearchParams({ profile: state.profile });
+    const params = new URLSearchParams({ profile: currentProfile() });
     if (search) params.set("search", search);
     const resp = await apiFetch(`/api/moderation/users?${params.toString()}`);
     const rows = await resp.json();
@@ -510,7 +837,7 @@ async function loadAudit() {
   const body = el("audit-body");
   const empty = el("audit-empty");
   try {
-    const resp = await apiFetch(`/api/moderation/audit?profile=${encodeURIComponent(state.profile)}`);
+    const resp = await apiFetch(`/api/moderation/audit?profile=${encodeURIComponent(currentProfile())}`);
     const rows = await resp.json();
     if (!rows.length) {
       body.innerHTML = "";
@@ -546,7 +873,7 @@ async function loadPatterns() {
 
   const list = el("pattern-list");
   try {
-    const resp = await apiFetch(`/api/moderation/patterns?profile=${encodeURIComponent(state.profile)}`);
+    const resp = await apiFetch(`/api/moderation/patterns?profile=${encodeURIComponent(currentProfile())}`);
     const patterns = await resp.json();
     if (!patterns.length) {
       list.innerHTML = '<div class="empty">Паттернов нет</div>';
@@ -593,7 +920,7 @@ async function togglePattern(patternId, enabled) {
   try {
     const resp = await apiFetch(`/api/moderation/patterns/${patternId}/enabled`, {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile, enabled }),
+      body: JSON.stringify({ profile: currentProfile(), enabled }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -609,7 +936,7 @@ async function deletePattern(patternId, name) {
   try {
     const resp = await apiFetch(`/api/moderation/patterns/${patternId}/delete`, {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile }),
+      body: JSON.stringify({ profile: currentProfile() }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -630,7 +957,7 @@ el("btn-create-pattern").addEventListener("click", async () => {
   }
   const signals = el("np-signals").value.split(",").map((s) => s.trim()).filter(Boolean);
   const payload = {
-    profile: state.profile,
+    profile: currentProfile(),
     name,
     description: el("np-description").value.trim(),
     required_signal_names: signals,
@@ -675,7 +1002,7 @@ function formatDuration(seconds) {
 
 async function loadAttackMode() {
   try {
-    const resp = await apiFetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(state.profile)}`);
+    const resp = await apiFetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(currentProfile())}`);
     const data = await resp.json();
     renderAttackStatus(data);
   } catch (e) {
@@ -726,7 +1053,7 @@ el("btn-attack-activate").addEventListener("click", () => {
     try {
       const resp = await apiFetch("/api/moderation/attack_mode/activate", {
         method: "POST",
-        body: JSON.stringify({ profile: state.profile, duration_seconds: duration }),
+        body: JSON.stringify({ profile: currentProfile(), duration_seconds: duration }),
       });
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
@@ -734,6 +1061,7 @@ el("btn-attack-activate").addEventListener("click", () => {
       }
       toast("Attack Mode включён", "success");
       await loadAttackMode();
+      await renderChannelRail(lastProfiles);
     } catch (e) {
       toast(`Ошибка: ${e.message}`, "error");
     }
@@ -745,7 +1073,7 @@ el("btn-attack-deactivate").addEventListener("click", async () => {
   try {
     const resp = await apiFetch("/api/moderation/attack_mode/deactivate", {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile }),
+      body: JSON.stringify({ profile: currentProfile() }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -753,6 +1081,7 @@ el("btn-attack-deactivate").addEventListener("click", async () => {
     }
     toast("Attack Mode выключен", "success");
     await loadAttackMode();
+    await renderChannelRail(lastProfiles);
   } catch (e) {
     toast(`Ошибка: ${e.message}`, "error");
   }
@@ -762,7 +1091,7 @@ el("btn-attack-deactivate").addEventListener("click", async () => {
 
 async function loadGiveawayMode() {
   try {
-    const resp = await apiFetch(`/api/moderation/giveaway_mode?profile=${encodeURIComponent(state.profile)}`);
+    const resp = await apiFetch(`/api/moderation/giveaway_mode?profile=${encodeURIComponent(currentProfile())}`);
     const data = await resp.json();
     renderGiveawayStatus(data);
   } catch (e) {
@@ -808,7 +1137,7 @@ el("btn-giveaway-activate").addEventListener("click", () => {
     try {
       const resp = await apiFetch("/api/moderation/giveaway_mode/activate", {
         method: "POST",
-        body: JSON.stringify({ profile: state.profile, duration_seconds: duration }),
+        body: JSON.stringify({ profile: currentProfile(), duration_seconds: duration }),
       });
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
@@ -827,7 +1156,7 @@ el("btn-giveaway-deactivate").addEventListener("click", async () => {
   try {
     const resp = await apiFetch("/api/moderation/giveaway_mode/deactivate", {
       method: "POST",
-      body: JSON.stringify({ profile: state.profile }),
+      body: JSON.stringify({ profile: currentProfile() }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -845,7 +1174,7 @@ el("btn-giveaway-deactivate").addEventListener("click", async () => {
 // переход на сам экран Attack Mode, здесь только фоновая индикация).
 async function pollAttackBanner() {
   try {
-    const resp = await fetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(state.profile)}`);
+    const resp = await fetch(`/api/moderation/attack_mode?profile=${encodeURIComponent(currentProfile())}`);
     if (resp.status === 401) return;
     const data = await resp.json();
     const banner = el("attack-banner");
@@ -868,7 +1197,7 @@ async function loadStats() {
   const fpBody = el("fp-stats-body");
   const fpEmpty = el("fp-stats-empty");
   try {
-    const resp = await apiFetch(`/api/moderation/stats/daily?profile=${encodeURIComponent(state.profile)}&days=30`);
+    const resp = await apiFetch(`/api/moderation/stats/daily?profile=${encodeURIComponent(currentProfile())}&days=30`);
     const days = await resp.json();
     const totals = days.reduce(
       (acc, d) => {
@@ -902,7 +1231,7 @@ async function loadStats() {
   }
 
   try {
-    const resp = await apiFetch(`/api/moderation/feedback?profile=${encodeURIComponent(state.profile)}&limit=500`);
+    const resp = await apiFetch(`/api/moderation/feedback?profile=${encodeURIComponent(currentProfile())}&limit=500`);
     const feedback = await resp.json();
     const bySignal = new Map();
     for (const f of feedback) {
@@ -945,8 +1274,263 @@ async function loadStats() {
 // --- settings: токен бота + config/moderation.yml ---------------------
 
 async function loadSettings() {
-  await Promise.all([loadBotTokenStatus(), loadConfig()]);
+  await Promise.all([loadBotTokenStatus(), loadConfig(), loadDiscordWebhook(), loadContentModeration()]);
 }
+
+// --- Discord-webhook (направление 01 master-plan.html) --------------------
+
+async function loadDiscordWebhook() {
+  const urlInput = el("discord-webhook-url");
+  const status = el("discord-webhook-status");
+  const toggleBtn = el("btn-toggle-discord-webhook");
+  const thresholdRow = el("discord-alert-threshold-row");
+  try {
+    const resp = await apiFetch(`/api/moderation/discord_webhook?profile=${encodeURIComponent(currentProfile())}`);
+    const data = await resp.json();
+    if (data.configured) {
+      urlInput.placeholder = data.url;
+      status.textContent = data.enabled ? "подключено" : "выключено";
+      status.style.color = data.enabled ? "var(--success)" : "var(--text-faint)";
+      toggleBtn.textContent = data.enabled ? "Выключить" : "Включить";
+      toggleBtn.style.display = canAdmin() ? "inline-block" : "none";
+      toggleBtn.dataset.enabled = String(data.enabled);
+      toggleBtn.dataset.url = data.url;
+      thresholdRow.style.display = "block";
+      const pct = Math.round((data.alert_confidence_threshold ?? 0.9) * 100);
+      el("discord-alert-threshold").value = String(pct);
+      el("discord-alert-threshold-value").textContent = `${pct}%`;
+    } else {
+      status.textContent = "не настроено";
+      status.style.color = "var(--text-faint)";
+      toggleBtn.style.display = "none";
+      thresholdRow.style.display = "none";
+    }
+  } catch (e) {
+    toast(`Ошибка загрузки настроек Discord: ${e.message}`, "error");
+  }
+  const canEdit = canAdmin();
+  urlInput.disabled = !canEdit;
+  el("btn-save-discord-webhook").disabled = !canEdit;
+  el("btn-save-discord-webhook").title = canEdit ? "" : "Требуется роль ADMIN и выше";
+  el("discord-alert-threshold").disabled = !canEdit;
+  el("btn-save-alert-threshold").disabled = !canEdit;
+}
+
+el("btn-save-discord-webhook").addEventListener("click", async () => {
+  const url = el("discord-webhook-url").value.trim();
+  if (!url) {
+    toast("Вставьте адрес webhook перед сохранением", "error");
+    return;
+  }
+  try {
+    const resp = await apiFetch("/api/moderation/discord_webhook", {
+      method: "POST",
+      body: JSON.stringify({ profile: currentProfile(), url, enabled: true }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    el("discord-webhook-url").value = "";
+    toast("Discord-webhook сохранён", "success");
+    await loadDiscordWebhook();
+  } catch (e) {
+    toast(`Ошибка: ${e.message}`, "error");
+  }
+});
+
+el("btn-toggle-discord-webhook").addEventListener("click", async () => {
+  const btn = el("btn-toggle-discord-webhook");
+  const nowEnabled = btn.dataset.enabled !== "true";
+  try {
+    const resp = await apiFetch("/api/moderation/discord_webhook", {
+      method: "POST",
+      body: JSON.stringify({ profile: currentProfile(), url: btn.dataset.url, enabled: nowEnabled }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    toast(nowEnabled ? "Уведомления включены" : "Уведомления выключены", "success");
+    await loadDiscordWebhook();
+  } catch (e) {
+    toast(`Ошибка: ${e.message}`, "error");
+  }
+});
+
+el("discord-alert-threshold").addEventListener("input", (e) => {
+  el("discord-alert-threshold-value").textContent = `${e.target.value}%`;
+});
+
+el("btn-save-alert-threshold").addEventListener("click", async () => {
+  const pct = Number(el("discord-alert-threshold").value);
+  try {
+    const resp = await apiFetch("/api/moderation/discord_webhook/alert_threshold", {
+      method: "POST",
+      body: JSON.stringify({ profile: currentProfile(), threshold: pct / 100 }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    toast(`Порог алерта сохранён: ${pct}%`, "success");
+  } catch (e) {
+    toast(`Ошибка: ${e.message}`, "error");
+  }
+});
+
+// --- Модерация контента: словарный детектор (Rule Engine) -----------------
+//
+// content_moderation_enabled управляет только тем, выполняется ли действие —
+// совпадения со словарём видны в аудите независимо от переключателя (см.
+// cigilbot/content/policy.py, режим наблюдателя).
+
+const CONTENT_CATEGORY_LABELS = {
+  racism: "Расизм/оскорбления",
+  threats: "Угрозы насилия",
+  advertising: "Реклама/спам",
+};
+
+async function loadContentModeration() {
+  await Promise.all([loadContentSettings(), loadContentRules()]);
+}
+
+async function loadContentSettings() {
+  const checkbox = el("content-moderation-enabled");
+  const status = el("content-moderation-status");
+  try {
+    const resp = await apiFetch(`/api/moderation/content_settings?profile=${encodeURIComponent(currentProfile())}`);
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.detail || resp.statusText);
+    }
+    const data = await resp.json();
+    checkbox.checked = data.enabled;
+    status.textContent = data.enabled
+      ? "Действия выполняются автоматически"
+      : "Только наблюдение — действия не выполняются";
+    status.style.color = data.enabled ? "var(--success)" : "var(--text-faint)";
+  } catch (e) {
+    toast(`Ошибка загрузки настроек модерации контента: ${e.message}`, "error");
+  }
+  checkbox.disabled = !canAdmin();
+}
+
+el("content-moderation-enabled").addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  try {
+    const resp = await apiFetch("/api/moderation/content_settings", {
+      method: "POST",
+      body: JSON.stringify({ profile: currentProfile(), enabled }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    toast(enabled ? "Модерация контента включена" : "Модерация контента выключена", "success");
+    await loadContentSettings();
+  } catch (err) {
+    e.target.checked = !enabled;
+    toast(`Ошибка: ${err.message}`, "error");
+  }
+});
+
+async function loadContentRules() {
+  const body = el("content-rules-body");
+  const empty = el("content-rules-empty");
+  const canEdit = canAdmin();
+  try {
+    const resp = await apiFetch(`/api/moderation/content_rules?profile=${encodeURIComponent(currentProfile())}`);
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.detail || resp.statusText);
+    }
+    const rules = await resp.json();
+    if (rules.length === 0) {
+      body.innerHTML = "";
+      empty.style.display = "block";
+    } else {
+      empty.style.display = "none";
+      body.innerHTML = rules
+        .map(
+          (r) => `
+          <tr>
+            <td>${escapeHtml(CONTENT_CATEGORY_LABELS[r.category] || r.category)}</td>
+            <td>${escapeHtml(r.phrase)}</td>
+            <td style="color:${r.enabled ? "var(--success)" : "var(--text-faint)"}">${r.enabled ? "включено" : "выключено"}</td>
+            <td style="text-align:right;white-space:nowrap;">
+              <button class="btn btn-ghost btn-small content-rule-toggle" data-id="${r.id}" data-enabled="${r.enabled}" ${canEdit ? "" : "disabled"}>${r.enabled ? "Выключить" : "Включить"}</button>
+              <button class="btn btn-ghost btn-small content-rule-delete" data-id="${r.id}" ${canEdit ? "" : "disabled"}>Удалить</button>
+            </td>
+          </tr>`
+        )
+        .join("");
+    }
+  } catch (e) {
+    body.innerHTML = "";
+    empty.style.display = "block";
+    toast(`Ошибка загрузки правил: ${e.message}`, "error");
+  }
+  el("content-rule-category").disabled = !canEdit;
+  el("content-rule-phrase").disabled = !canEdit;
+  el("btn-add-content-rule").disabled = !canEdit;
+}
+
+el("content-rules-body").addEventListener("click", async (e) => {
+  const toggleBtn = e.target.closest(".content-rule-toggle");
+  const deleteBtn = e.target.closest(".content-rule-delete");
+  if (toggleBtn) {
+    const id = toggleBtn.dataset.id;
+    const nowEnabled = toggleBtn.dataset.enabled !== "true";
+    try {
+      const resp = await apiFetch(`/api/moderation/content_rules/${id}/enabled`, {
+        method: "POST",
+        body: JSON.stringify({ profile: currentProfile(), enabled: nowEnabled }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+      await loadContentRules();
+    } catch (err) {
+      toast(`Ошибка: ${err.message}`, "error");
+    }
+  } else if (deleteBtn) {
+    const id = deleteBtn.dataset.id;
+    try {
+      const resp = await apiFetch(`/api/moderation/content_rules/${id}/delete`, {
+        method: "POST",
+        body: JSON.stringify({ profile: currentProfile() }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+      toast("Правило удалено", "success");
+      await loadContentRules();
+    } catch (err) {
+      toast(`Ошибка: ${err.message}`, "error");
+    }
+  }
+});
+
+el("btn-add-content-rule").addEventListener("click", async () => {
+  const category = el("content-rule-category").value;
+  const phrase = el("content-rule-phrase").value.trim();
+  if (!phrase) {
+    toast("Введите слово или фразу перед добавлением", "error");
+    return;
+  }
+  try {
+    const resp = await apiFetch("/api/moderation/content_rules", {
+      method: "POST",
+      body: JSON.stringify({ profile: currentProfile(), category, phrase }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || resp.statusText);
+    }
+    el("content-rule-phrase").value = "";
+    toast("Правило добавлено", "success");
+    await loadContentRules();
+  } catch (e) {
+    toast(`Ошибка: ${e.message}`, "error");
+  }
+});
 
 async function loadBotTokenStatus() {
   const badge = el("token-status-badge");
@@ -1096,7 +1680,7 @@ function connectWs() {
   state.ws = ws;
 
   ws.addEventListener("open", () => {
-    ws.send(state.profile);
+    ws.send(currentProfile());
     setConnStatus(true);
     state.wsRetryMs = 1000;
   });
@@ -1105,6 +1689,7 @@ function connectWs() {
       const data = JSON.parse(ev.data);
       renderClusters(data.clusters);
       renderVerdicts(data.verdicts);
+      highlightClusterIfPending();
     } catch {
       // игнорируем нераспарсенные сообщения — не роняем соединение
     }
@@ -1124,6 +1709,194 @@ function setConnStatus(on) {
   el("conn-label").textContent = on ? "live" : "переподключение…";
 }
 
+// --- Content: живая лента срабатываний словарного детектора --------------
+// Отдельный WebSocket от основного /ws (пользователь 2026-08-13: "не хочу
+// смешивать спам атаку и модерацию вместе") — подключается только пока
+// открыт экран Content, не постоянно, как основной канал.
+
+const CONTENT_CATEGORY_FEED_LABELS = {
+  racism: "Расизм/оскорбления",
+  threats: "Угрозы насилия",
+  advertising: "Реклама/спам",
+};
+
+// Набор длительностей для ручного таймаута из ленты Content (пользователь
+// 2026-08-13: "нужно сделать отдельный таймаут на разное кол-во времени") —
+// без этого TIMEOUT всегда уходил с duration_seconds=null, и executor.py
+// молча подставлял свои дефолтные 10 минут независимо от тяжести нарушения.
+const CONTENT_TIMEOUT_OPTIONS = [
+  { label: "1м", seconds: 60 },
+  { label: "5м", seconds: 300 },
+  { label: "10м", seconds: 600 },
+  { label: "1ч", seconds: 3600 },
+  { label: "1д", seconds: 86400 },
+  { label: "2нед", seconds: 1209600 },
+];
+
+const MANUAL_ACTION_LABELS = {
+  TIMEOUT: "таймаут выдан",
+  BAN: "бан выдан",
+  DELETE_MESSAGES: "сообщение удалено",
+};
+
+function renderContentEvents(events) {
+  const body = el("content-events-body");
+  const empty = el("content-events-empty");
+  if (!events || events.length === 0) {
+    body.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  const canModerate = ["MODERATOR", "ADMIN", "OWNER"].includes(state.role);
+  body.innerHTML = events
+    .map((e) => {
+      const when = new Date(e.created_at * 1000).toLocaleTimeString();
+      const actionClass = e.action.toLowerCase();
+      const enforcedNote = e.enforced
+        ? ""
+        : `<div class="content-enforced-note">не выполнено${e.blocked_by ? ` (${escapeHtml(e.blocked_by)})` : ""}</div>`;
+      const userId = escapeHtml(e.user_id);
+      const login = escapeHtml(e.login);
+
+      // Пользователь 2026-08-13: "можем как-то помечать сообщения (которое
+      // было забанено/удалено/таймаут)... может цвет более тусклым делать".
+      // manual_action переживает обновление страницы (см. миграцию 016) —
+      // строка гаснет и кнопки заменяются меткой того, что уже сделано.
+      if (e.manual_action) {
+        const label = MANUAL_ACTION_LABELS[e.manual_action] || e.manual_action;
+        return `
+          <tr class="content-row-resolved">
+            <td>${escapeHtml(when)}</td>
+            <td>${login}</td>
+            <td>${escapeHtml(CONTENT_CATEGORY_FEED_LABELS[e.category] || e.category)}</td>
+            <td>${escapeHtml(e.matched_phrase)}</td>
+            <td><span class="content-action-pill ${actionClass}">${escapeHtml(e.action)}</span></td>
+            <td>${enforcedNote}</td>
+            <td class="content-manual-actions"><span class="content-resolved-note">✓ ${escapeHtml(label)}${e.manual_action_by ? ` — ${escapeHtml(e.manual_action_by)}` : ""}</span></td>
+          </tr>`;
+      }
+
+      const deleteBtn = e.twitch_message_id
+        ? `<button class="btn btn-ghost btn-small content-manual-action" data-event-id="${e.id}" data-action="DELETE_MESSAGES" data-user-id="${userId}" data-login="${login}" data-message-id="${escapeHtml(e.twitch_message_id)}" ${canModerate ? "" : "disabled"}>Удалить</button>`
+        : "";
+      const timeoutBtns = CONTENT_TIMEOUT_OPTIONS.map(
+        (opt) =>
+          `<button class="btn btn-ghost btn-small content-manual-action" data-event-id="${e.id}" data-action="TIMEOUT" data-user-id="${userId}" data-login="${login}" data-duration="${opt.seconds}" ${canModerate ? "" : "disabled"}>${opt.label}</button>`
+      ).join("");
+      return `
+        <tr>
+          <td>${escapeHtml(when)}</td>
+          <td>${login}</td>
+          <td>${escapeHtml(CONTENT_CATEGORY_FEED_LABELS[e.category] || e.category)}</td>
+          <td>${escapeHtml(e.matched_phrase)}</td>
+          <td><span class="content-action-pill ${actionClass}">${escapeHtml(e.action)}</span></td>
+          <td>${enforcedNote}</td>
+          <td class="content-manual-actions">
+            ${deleteBtn}
+            ${timeoutBtns}
+            <button class="btn btn-danger btn-small content-manual-action" data-event-id="${e.id}" data-action="BAN" data-user-id="${userId}" data-login="${login}" ${canModerate ? "" : "disabled"}>Бан</button>
+          </td>
+        </tr>`;
+    })
+    .join("");
+}
+
+function confirmContentManualAction(eventId, action, userId, login, messageId, durationSeconds) {
+  const durationLabel = CONTENT_TIMEOUT_OPTIONS.find((o) => o.seconds === durationSeconds)?.label;
+  const verbs = {
+    BAN: "забанить",
+    TIMEOUT: `выдать таймаут на ${durationLabel || "10м"}`,
+    DELETE_MESSAGES: "удалить сообщение",
+  };
+  el("modal-title").textContent = `${action} — подтвердите`;
+  el("modal-body").textContent =
+    action === "DELETE_MESSAGES"
+      ? `Вы собираетесь удалить сообщение пользователя ${login} (ручное модерирование из ленты Content). ` +
+        `Действие попадёт в аудит от имени "${state.login}".`
+      : `Вы собираетесь ${verbs[action]} пользователю ${login} (ручное модерирование из ленты Content, ` +
+        `автоматические действия сейчас выключены — это решение принимаете лично вы). ` +
+        `Действие попадёт в аудит от имени "${state.login}".`;
+  pendingConfirm = async () => {
+    try {
+      const resp = await apiFetch("/api/moderation/actions", {
+        method: "POST",
+        body: JSON.stringify({
+          profile: currentProfile(),
+          action,
+          target_user_ids: action === "DELETE_MESSAGES" ? [] : [userId],
+          message_ids: action === "DELETE_MESSAGES" ? [messageId] : [],
+          duration_seconds: action === "TIMEOUT" ? durationSeconds : null,
+          reason: `Ручное модерирование из ленты Content (${login})`,
+        }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || resp.statusText);
+      }
+      toast(`Задание поставлено в очередь (${action}, ${login})`, "success");
+      // Пометка "разобрано" — не критична для самого действия (оно уже в
+      // очереди), поэтому сбой здесь не должен выглядеть как ошибка всей
+      // операции, только тихо не погасить строку до следующего WS-снимка.
+      try {
+        await apiFetch(`/api/moderation/content_events/${eventId}/manual_action`, {
+          method: "POST",
+          body: JSON.stringify({ profile: currentProfile(), action }),
+        });
+      } catch {
+        // см. комментарий выше
+      }
+    } catch (e) {
+      toast(`Ошибка: ${e.message}`, "error");
+    }
+  };
+  el("modal-overlay").classList.add("open");
+}
+
+el("content-events-body").addEventListener("click", (e) => {
+  const btn = e.target.closest(".content-manual-action");
+  if (!btn) return;
+  const duration = btn.dataset.duration ? Number(btn.dataset.duration) : undefined;
+  confirmContentManualAction(
+    Number(btn.dataset.eventId), btn.dataset.action, btn.dataset.userId, btn.dataset.login,
+    btn.dataset.messageId, duration
+  );
+});
+
+function connectContentWs() {
+  if (state.contentWs) {
+    state.contentWs.close();
+  }
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/api/moderation/content_ws`);
+  state.contentWs = ws;
+
+  ws.addEventListener("open", () => {
+    ws.send(currentProfile());
+  });
+  ws.addEventListener("message", (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      renderContentEvents(data.events);
+    } catch {
+      // игнорируем нераспарсенные сообщения — не роняем соединение
+    }
+  });
+  ws.addEventListener("close", () => {
+    if (state.contentWs === ws && el("screen-content").classList.contains("active")) {
+      setTimeout(connectContentWs, 2000);
+    }
+  });
+  ws.addEventListener("error", () => ws.close());
+}
+
+function disconnectContentWs() {
+  if (state.contentWs) {
+    state.contentWs.close();
+    state.contentWs = null;
+  }
+}
+
 // --- инициализация ----------------------------------------------------
 
 document.querySelectorAll(".nav-item").forEach((item) => {
@@ -1138,9 +1911,8 @@ document.querySelectorAll(".nav-item").forEach((item) => {
   });
 });
 
-el("profile-select").addEventListener("change", (e) => {
-  state.profile = e.target.value;
-  localStorage.setItem("mod.profile", state.profile);
+el("profile-select").addEventListener("change", () => {
+  localStorage.setItem("mod.profile", currentProfile());
   connectWs();
   loadAudit();
 });
@@ -1194,7 +1966,13 @@ el("btn-chatbot-stop").addEventListener("click", async () => {
   const ok = await checkAuth();
   if (!ok) return;
   await loadProfiles();
-  connectWs();
+  const hasDeepLink = new URLSearchParams(window.location.search).has("channel");
+  if (hasDeepLink) {
+    applyDeepLinkFromUrl();
+  } else {
+    connectWs();
+    await loadChannels();
+  }
   await pollAttackBanner();
   setInterval(pollAttackBanner, 15000);
   await refreshChatbotStatus();

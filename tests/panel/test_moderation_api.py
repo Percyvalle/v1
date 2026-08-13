@@ -913,6 +913,146 @@ class TestGiveawayModeEndpoints:
         assert app_client.get("/api/moderation/giveaway_mode").json()["active"] is True
 
 
+class TestDiscordWebhookEndpoints:
+    """Направление 01 master-plan.html — тот же уровень доступа, что
+    Attack/Giveaway Mode: меняет ADMIN+, читают все аутентифицированные."""
+
+    async def test_get_requires_session(self, app_client: TestClient) -> None:
+        resp = app_client.get("/api/moderation/discord_webhook")
+        assert resp.status_code == 401
+
+    async def test_unconfigured_by_default(self, app_client: TestClient) -> None:
+        login_as(app_client, "VIEWER")
+        resp = app_client.get("/api/moderation/discord_webhook")
+        assert resp.status_code == 200
+        assert resp.json() == {"configured": False}
+
+    async def test_set_requires_admin(self, app_client: TestClient) -> None:
+        login_as(app_client, "MODERATOR")
+        resp = app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc"},
+        )
+        assert resp.status_code == 403
+
+    async def test_admin_can_set(self, app_client: TestClient, store: ModerationStore) -> None:
+        login_as(app_client, "ADMIN", login="admin1")
+
+        resp = app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc"},
+        )
+
+        assert resp.status_code == 200
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+        assert config.updated_by == "admin1"
+
+    async def test_get_masks_url(self, app_client: TestClient) -> None:
+        login_as(app_client, "ADMIN")
+        app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/12345/verylongsecrettoken"},
+        )
+
+        resp = app_client.get("/api/moderation/discord_webhook")
+
+        body = resp.json()
+        assert body["configured"] is True
+        assert "verylongsecrettoken" not in body["url"] or body["url"].endswith("token")
+        assert "•" in body["url"]
+
+    async def test_rejects_non_discord_url_when_enabling(self, app_client: TestClient) -> None:
+        login_as(app_client, "ADMIN")
+        resp = app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://evil.example.com/steal", "enabled": True},
+        )
+        assert resp.status_code == 400
+
+    async def test_disabling_does_not_validate_url_shape(self, app_client: TestClient) -> None:
+        # Выключение — не создание нового webhook, поэтому не должно
+        # спотыкаться о валидацию формата (модератор мог настроить его
+        # раньше в другом формате, до появления этой проверки).
+        login_as(app_client, "ADMIN")
+        resp = app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc", "enabled": False},
+        )
+        assert resp.status_code == 200
+
+    async def test_can_toggle_enabled_without_changing_url(
+        self, app_client: TestClient, store: ModerationStore
+    ) -> None:
+        login_as(app_client, "ADMIN")
+        app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc", "enabled": True},
+        )
+
+        app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc", "enabled": False},
+        )
+
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.enabled is False
+        assert config.url == "https://discord.com/api/webhooks/1/abc"
+
+
+class TestAlertThresholdEndpoint:
+    """Направление 01 master-plan.html — порог confidence для алерта на
+    кластер, тот же уровень доступа, что остальные Discord-настройки:
+    меняет ADMIN+."""
+
+    async def test_requires_admin(self, app_client: TestClient) -> None:
+        login_as(app_client, "MODERATOR")
+        resp = app_client.post(
+            "/api/moderation/discord_webhook/alert_threshold", json={"threshold": 0.7}
+        )
+        assert resp.status_code == 403
+
+    async def test_admin_can_set_threshold(
+        self, app_client: TestClient, store: ModerationStore
+    ) -> None:
+        login_as(app_client, "ADMIN")
+        app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc", "enabled": True},
+        )
+
+        resp = app_client.post(
+            "/api/moderation/discord_webhook/alert_threshold", json={"threshold": 0.7}
+        )
+
+        assert resp.status_code == 200
+        config = await store.get_discord_webhook()
+        assert config is not None
+        assert config.alert_confidence_threshold == 0.7
+
+    async def test_rejects_out_of_range_threshold(self, app_client: TestClient) -> None:
+        login_as(app_client, "ADMIN")
+        app_client.post(
+            "/api/moderation/discord_webhook",
+            json={"url": "https://discord.com/api/webhooks/1/abc", "enabled": True},
+        )
+
+        resp = app_client.post(
+            "/api/moderation/discord_webhook/alert_threshold", json={"threshold": 1.5}
+        )
+
+        assert resp.status_code == 400
+
+    async def test_fails_when_webhook_not_configured(self, app_client: TestClient) -> None:
+        login_as(app_client, "ADMIN")
+        resp = app_client.post(
+            "/api/moderation/discord_webhook/alert_threshold", json={"threshold": 0.7}
+        )
+        assert resp.status_code == 400
+
+
 class TestFeedbackEndpoints:
     async def test_record_requires_moderator(self, app_client: TestClient) -> None:
         login_as(app_client, "VIEWER")
@@ -1112,3 +1252,44 @@ class TestWebSocket:
             data = ws.receive_json()
         assert "clusters" in data
         assert "verdicts" in data
+
+
+class TestContentWebSocket:
+    """Отдельный канал от /ws (пользователь 2026-08-13: "не хочу смешивать
+    спам атаку и модерацию вместе") — своя лента срабатываний словарного
+    детектора для визуального теста."""
+
+    def test_rejects_without_session(self, app_client: TestClient) -> None:
+        try:
+            with app_client.websocket_connect("/api/moderation/content_ws"):
+                pass
+            raised = False
+        except Exception:
+            raised = True
+        assert raised
+
+    def test_sends_empty_snapshot_by_default(self, app_client: TestClient) -> None:
+        login_as(app_client, "VIEWER")
+        with app_client.websocket_connect("/api/moderation/content_ws") as ws:
+            ws.send_text("main")
+            data = ws.receive_json()
+        assert data["events"] == []
+
+    async def test_sends_recorded_event(
+        self, app_client: TestClient, store: ModerationStore
+    ) -> None:
+        from cigilbot.types import ContentCategory
+
+        await store.record_content_event(
+            user_id="1", login="viewer1", message_id=None, category=ContentCategory.RACISM,
+            matched_phrase="слово", action="OBSERVE", prior_violations=0,
+            blocked_by="content_moderation_disabled", enforced=False,
+        )
+
+        login_as(app_client, "VIEWER")
+        with app_client.websocket_connect("/api/moderation/content_ws") as ws:
+            ws.send_text("main")
+            data = ws.receive_json()
+
+        assert len(data["events"]) == 1
+        assert data["events"][0]["login"] == "viewer1"

@@ -18,24 +18,35 @@ ModerationEngine ничего не исполняет в Twitch — только
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import OrderedDict
 from dataclasses import replace
 
 from cigilbot import policy
+from cigilbot.alerts import send_cluster_alert, send_escalation
 from cigilbot.clustering import find_clusters
 from cigilbot.confidence import confidence as compute_confidence
 from cigilbot.config import ChannelProfile, ModerationConfig
+from cigilbot.content import policy as content_policy
+from cigilbot.content.detector import ContentRule, check_content
 from cigilbot.detectors import run_all
 from cigilbot.detectors.base import DetectionContext
 from cigilbot.normalize import MessageFingerprint, fingerprint
 from cigilbot.patterns import Pattern, match_patterns
 from cigilbot.scoring import families_triggered, risk_score
-from cigilbot.store import AttackModeStatus, GiveawayModeStatus, ModerationStore
+from cigilbot.store import (
+    AttackModeStatus,
+    ContentSettings,
+    DiscordWebhookConfig,
+    GiveawayModeStatus,
+    ModerationStore,
+)
 from cigilbot.types import (
     ChannelContext,
     ChatEvent,
+    ClusterInfo,
     Mode,
     Sensitivity,
     Signal,
@@ -73,6 +84,20 @@ HYPE_MESSAGES_PER_MINUTE_THRESHOLD = 90.0
 # _get_or_create_user), так что вытеснение старых записей не теряет данные,
 # только требует одного лишнего похода в БД при возврате вытесненного юзера.
 MAX_CACHED_USERS = 20_000
+
+# Эскалация при повторных атаках (направление 01 master-plan.html): 3+
+# новых кластера за 1 час значит, что обычные пороги детекции не
+# справляются с волной — сигнал отдельный и громче обычного алерта на
+# кластер, не его замена.
+ESCALATION_CLUSTER_THRESHOLD = 3
+ESCALATION_WINDOW_SECONDS = 3600.0
+
+# Порог confidence для Discord-алерта на новый кластер (направление 01
+# master-plan.html) настраивается per-channel через панель
+# (mod_discord_webhook.alert_confidence_threshold), не жёсткая константа
+# здесь — см. DiscordWebhookConfig.alert_confidence_threshold в store.py
+# про дефолт. Кластеры с низким confidence всё равно видны на экране Live
+# панели независимо от порога — он решает только "отвлекать ли алертом".
 
 
 def _window_horizon(config: ModerationConfig) -> float:
@@ -146,6 +171,33 @@ class ModerationEngine:
         # сработавших сигналов). Пусто по умолчанию -> confidence() получает
         # fp_penalty=0.0, как и раньше до этого подэтапа.
         self._fp_penalties: dict[str, float] = {}
+        # Content Rules (Rule Engine, cigilbot/content/) — тот же явный
+        # reload-паттерн, что Pattern Library выше: список фраз меняется
+        # через панель редко, перечитывать БД на каждое сообщение было бы
+        # лишней задержкой. Пусто по умолчанию -> check_content() ничего не
+        # находит, пока reload_content_rules() не вызван хотя бы раз.
+        self._content_rules: tuple[ContentRule, ...] = ()
+        # ContentSettings.enabled=False по умолчанию (см. миграцию 014) —
+        # то же значение, что даёт get_content_settings() на пустой БД, до
+        # первого sync_content_settings(). Двойная защита режима
+        # наблюдателя: даже если вызывающий код забудет вызвать sync
+        # (движок без store, тесты) — content_moderation_enabled остаётся
+        # False, а не неопределённым.
+        self._content_settings = ContentSettings(enabled=False, updated_by="", updated_at=0.0)
+
+    async def reload_content_rules(self) -> None:
+        """Перечитывает включённые правила словаря из store. Вызывается
+        явно — панелью после добавления/удаления правила, или периодически
+        внешним кодом (main.py, тот же поллер, что reload_patterns())."""
+        if self._store is not None:
+            self._content_rules = await self._store.list_content_rules(enabled_only=True)
+
+    async def sync_content_settings(self) -> None:
+        """Перечитывает выключатель content-модерации из store — вызывается
+        явно после изменения через панель (тот же паттерн, что
+        sync_attack_mode())."""
+        if self._store is not None:
+            self._content_settings = await self._store.get_content_settings()
 
     async def reload_patterns(self) -> None:
         """Перечитывает включённые паттерны из store. Вызывается явно —
@@ -305,6 +357,67 @@ class ModerationEngine:
             self._users.popitem(last=False)
         return user
 
+    def _notify_new_cluster(self, cluster: ClusterInfo) -> None:
+        """Ставит отправку Discord-алерта в фон и сразу возвращает
+        управление — observe() не ждёт сеть (CLAUDE.md: чтение чата никогда
+        не ждёт). Сам webhook читается из store внутри задачи, а не здесь,
+        по той же причине: ещё один поход в БД не должен блокировать
+        observe(). Порог confidence тоже проверяется внутри задачи — он
+        настраивается per-channel через панель (mod_discord_webhook.
+        alert_confidence_threshold), не жёсткая константа, значит без похода
+        в БД сравнивать не с чем."""
+        if self._store is None:
+            return
+        asyncio.create_task(self._send_new_cluster_alert(cluster))
+
+    async def _send_new_cluster_alert(self, cluster: ClusterInfo) -> None:
+        assert self._store is not None
+        try:
+            webhook = await self._store.get_discord_webhook()
+        except Exception:
+            log.exception("Не удалось прочитать настройки Discord-webhook")
+            return
+        # Эскалация считается независимо от того, прошёл ли ЭТОТ кластер
+        # confidence-фильтр алерта, и независимо от enabled/наличия webhook:
+        # "3+ атаки за час" истинно вне зависимости от того, настроены ли
+        # уведомления — count_recent_new_clusters всегда доступен через
+        # store напрямую, без похода в webhook.
+        if webhook is not None:
+            await self._maybe_send_escalation(webhook)
+        if webhook is None or not webhook.enabled:
+            return
+        if cluster.confidence < webhook.alert_confidence_threshold:
+            return
+        await send_cluster_alert(webhook, cluster, channel=self._channel_profile.channel)
+
+    async def _maybe_send_escalation(self, webhook: DiscordWebhookConfig) -> None:
+        """Эскалация при повторных атаках (направление 01 master-plan.html):
+        ESCALATION_CLUSTER_THRESHOLD+ новых кластеров за ESCALATION_WINDOW_SECONDS
+        сигналят, что обычные пороги детекции не справляются с волной, не с
+        единичным всплеском — план явно называет это "алертится отдельно",
+        а не дублированием обычного алерта на кластер.
+
+        Cooldown через last_escalation_sent_at — без него 4-й, 5-й, 6-й
+        кластер сверх порога слали бы новую эскалацию на каждый, хотя план
+        просит один алерт на волну."""
+        assert self._store is not None
+        now = time.time()
+        if (
+            webhook.last_escalation_sent_at is not None
+            and now - webhook.last_escalation_sent_at < ESCALATION_WINDOW_SECONDS
+        ):
+            return
+        count = await self._store.count_recent_new_clusters(since=now - ESCALATION_WINDOW_SECONDS)
+        if count < ESCALATION_CLUSTER_THRESHOLD:
+            return
+        await send_escalation(
+            webhook,
+            channel=self._channel_profile.channel,
+            cluster_count=count,
+            window_hours=ESCALATION_WINDOW_SECONDS / 3600,
+        )
+        await self._store.mark_escalation_sent(sent_at=now)
+
     async def observe(
         self, event: ChatEvent, *, channel_context: ChannelContext | None = None
     ) -> Verdict:
@@ -419,9 +532,14 @@ class ModerationEngine:
         stable_cluster_id = own_cluster.cluster_id if own_cluster is not None else None
         if own_cluster is not None and self._store is not None:
             try:
-                stable_cluster_id = await self._store.upsert_cluster_by_members(own_cluster)
+                stable_cluster_id, is_new_cluster = await self._store.upsert_cluster_by_members_ex(
+                    own_cluster
+                )
             except Exception:
                 log.exception("Не удалось сохранить/обновить кластер в БД")
+            else:
+                if is_new_cluster:
+                    self._notify_new_cluster(replace(own_cluster, cluster_id=stable_cluster_id))
 
         verdict = Verdict(
             user_id=event.user_id,
@@ -444,7 +562,8 @@ class ModerationEngine:
         if matched_pattern is not None:
             verdict = replace(verdict, pattern_id=matched_pattern.id)
 
-        await self._persist(verdict, event, fp)
+        message_id = await self._persist(verdict, event, fp)
+        await self._check_content(event, user, message_id=message_id)
         return verdict
 
     async def _persist(
@@ -452,10 +571,10 @@ class ModerationEngine:
         verdict: Verdict,
         event: ChatEvent,
         fp: MessageFingerprint,
-    ) -> None:
+    ) -> int | None:
         store = self._store
         if store is None:
-            return
+            return None
         try:
             message_id = await store.save_message(event, fp)
             await store.save_verdict(verdict, message_id=message_id)
@@ -463,3 +582,56 @@ class ModerationEngine:
             # Сбой записи аудита не должен ронять обработку чата — движок
             # уже посчитал вердикт, потерять стоит запись, а не сообщение.
             log.exception("Не удалось записать аудит модерации в БД")
+            return None
+        return message_id
+
+    async def _check_content(
+        self, event: ChatEvent, user: UserState, *, message_id: int | None
+    ) -> None:
+        """Rule Engine (cigilbot/content/) — отдельный путь от risk_score,
+        см. докстринг content/policy.py. Ничего не возвращает и не влияет
+        на Verdict: сейчас это только наблюдение, записанное в
+        mod_content_events, executor.py его не читает и не исполняет (см.
+        РЕЖИМ НАБЛЮДАТЕЛЯ в content/policy.py) — совпадение видно в панели,
+        реальное действие не выполняется независимо от content_moderation_
+        enabled, пока сама панель/executor не научатся ставить его в
+        mod_action_queue.
+        """
+        if self._store is None or not self._content_rules:
+            return
+        match = check_content(event.text, self._content_rules)
+        if match is None:
+            return
+
+        try:
+            prior = await self._store.get_content_violation_count(event.user_id, match.category)
+            decision = content_policy.decide_content(
+                match,
+                user=user,
+                event=event,
+                prior_violations=prior,
+                content_moderation_enabled=self._content_settings.enabled,
+            )
+            # Счётчик растёт и в режиме наблюдателя (blocked_by ==
+            # "content_moderation_disabled") — иначе включение реальных
+            # действий позже стартовало бы эскалацию с нуля, будто
+            # нарушений в режиме наблюдения не было. Не растёт только для
+            # privileged/protected: для них это не нарушение вовсе, а не
+            # нарушение, которое решили не наказывать.
+            if decision.blocked_by not in ("privileged_user", "trusted_or_marked_safe"):
+                await self._store.record_content_violation(event.user_id, match.category)
+            await self._store.record_content_event(
+                user_id=event.user_id,
+                login=event.login,
+                message_id=message_id,
+                category=match.category,
+                matched_phrase=match.matched_phrase,
+                action=decision.action.value,
+                prior_violations=decision.prior_violations,
+                blocked_by=decision.blocked_by,
+                enforced=False,
+            )
+        except Exception:
+            # Тот же принцип, что _persist: сбой аудита content-детектора не
+            # должен ронять обработку чата.
+            log.exception("Не удалось обработать совпадение словарного детектора")

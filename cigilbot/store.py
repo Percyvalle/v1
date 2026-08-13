@@ -22,10 +22,11 @@ from typing import Any
 
 import aiosqlite
 
+from cigilbot.content.detector import ContentRule
 from cigilbot.migrations import migrate
-from cigilbot.normalize import MessageFingerprint
+from cigilbot.normalize import MessageFingerprint, minhash, similarity
 from cigilbot.patterns import Pattern
-from cigilbot.types import ChatEvent, ClusterInfo, TrustLevel, UserState, Verdict
+from cigilbot.types import ChatEvent, ClusterInfo, ContentCategory, TrustLevel, UserState, Verdict
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,137 @@ class GiveawayModeStatus:
             "activated_at": self.activated_at,
             "expires_at": self.expires_at,
             "seconds_remaining": max(0.0, self.expires_at - time.time()),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ContentSettings:
+    """Выключатель словарного детектора (Rule Engine) — singleton-паттерн,
+    как AttackModeStatus. enabled=False по умолчанию (см. миграцию 014):
+    без явного включения через панель content-детектор работает только в
+    режиме наблюдателя — см. content/policy.py::decide_content()."""
+
+    enabled: bool
+    updated_by: str
+    updated_at: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "updated_by": self.updated_by,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DiscordWebhookConfig:
+    """Discord-webhook канала (направление 01 master-plan.html) — тот же
+    singleton-паттерн, что AttackModeStatus: одна строка на БД, одна БД на
+    канал. enabled отделён от url, чтобы модератор мог временно выключить
+    алерты, не стирая и не вводя заново сам адрес. last_digest_sent_at и
+    last_escalation_sent_at — None, пока соответствующий алерт ни разу не
+    уходил на этот webhook. alert_confidence_threshold — porog per-channel
+    (не жёсткая константа в engine.py): разным каналам подходит разная
+    граница "достаточно уверены, чтобы отвлекать модератора"."""
+
+    url: str
+    enabled: bool
+    updated_by: str
+    updated_at: float
+    last_digest_sent_at: float | None = None
+    last_escalation_sent_at: float | None = None
+    alert_confidence_threshold: float = 0.9
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "url": self.url,
+            "enabled": self.enabled,
+            "updated_by": self.updated_by,
+            "updated_at": self.updated_at,
+            "alert_confidence_threshold": self.alert_confidence_threshold,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DigestStats:
+    """Сводка активности канала за период (направление 01 master-plan.html:
+    ежедневный digest). Считается напрямую по mod_messages/mod_verdicts/
+    mod_clusters за период — НЕ по mod_stats_daily: те счётчики
+    (increment_daily_stats) сейчас нигде не вызываются из реального кода
+    движка, только из тестов, так что таблица в проде всегда пустая."""
+
+    total_messages: int
+    suspicious_verdicts: int
+    would_timeout: int
+    would_ban: int
+    new_clusters: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "total_messages": self.total_messages,
+            "suspicious_verdicts": self.suspicious_verdicts,
+            "would_timeout": self.would_timeout,
+            "would_ban": self.would_ban,
+            "new_clusters": self.new_clusters,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ModeratorActionSummary:
+    """Одна строка рейтинга модераторов — сколько действий каждого типа
+    выполнил конкретный actor за период."""
+
+    actor: str
+    timeouts: int
+    bans: int
+    deletes: int
+
+    @property
+    def total(self) -> int:
+        return self.timeouts + self.bans + self.deletes
+
+
+@dataclass(frozen=True, slots=True)
+class RecentModeratorAction:
+    """Одна строка из "последние действия" в сводке — кто/что/кого."""
+
+    created_at: float
+    actor: str
+    action: str
+    scope: str
+    succeeded: int
+    failed: int
+
+
+@dataclass(frozen=True, slots=True)
+class ModeratorActivityStats:
+    """Сводка по работе модераторов за период (пользователь 2026-08-13:
+    "можем сводку отправлять в дискорд по работе модераторов на канале?") —
+    отдельно от DigestStats: та описывает, что НАШЁЛ бот, эта — что СДЕЛАЛИ
+    люди руками. Источник — mod_actions, единственная таблица, куда
+    executor.py и ручные действия из панели пишут аудит (record_action_audit)."""
+
+    total_timeouts: int
+    total_bans: int
+    total_deletes: int
+    by_moderator: tuple[ModeratorActionSummary, ...]
+    recent: tuple[RecentModeratorAction, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "total_timeouts": self.total_timeouts,
+            "total_bans": self.total_bans,
+            "total_deletes": self.total_deletes,
+            "by_moderator": [
+                {"actor": m.actor, "timeouts": m.timeouts, "bans": m.bans,
+                 "deletes": m.deletes, "total": m.total}
+                for m in self.by_moderator
+            ],
+            "recent": [
+                {"created_at": r.created_at, "actor": r.actor, "action": r.action,
+                 "scope": r.scope, "succeeded": r.succeeded, "failed": r.failed}
+                for r in self.recent
+            ],
         }
 
 
@@ -233,14 +365,16 @@ class ModerationStore:
             """
             INSERT INTO mod_messages
                 (user_id, login, text, normalized, skeleton, created_at,
-                 is_first_message, is_subscriber, is_moderator, is_vip, domains)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_first_message, is_subscriber, is_moderator, is_vip, domains,
+                 twitch_message_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.user_id, event.login, event.text, fp.normalized, fp.skeleton,
                 event.timestamp, int(event.is_first_message), int(event.is_subscriber),
                 int(event.is_moderator), int(event.is_vip),
                 json.dumps(list(fp.domains)) if fp.domains else None,
+                event.message_id or None,
             ),
         )
         await self._db.commit()
@@ -352,7 +486,20 @@ class ModerationStore:
         счёт вытеснения старых сообщений из окна), а не случайное совпадение:
         рёбра между сообщениями требуют реального сходства контента/домена/
         структуры, не одной лишь синхронности по времени.
+
+        Для различения "новый инцидент vs рост уже известного" (нужно
+        Discord-алерту — направление 01 master-plan.html: триггер только на
+        новый активный кластер, не на каждое обновление) есть
+        upsert_cluster_by_members_ex(), которая возвращает ту же пару
+        значений явно. Эта функция возвращает только id — существующие
+        вызывающие места (engine.py, тесты) не переписаны под кортеж, чтобы
+        не трогать их без необходимости.
         """
+        cluster_id, _is_new = await self.upsert_cluster_by_members_ex(cluster)
+        return cluster_id
+
+    async def upsert_cluster_by_members_ex(self, cluster: ClusterInfo) -> tuple[int, bool]:
+        """upsert_cluster_by_members(), но возвращает (cluster_id, is_new)."""
         placeholders = ",".join("?" for _ in cluster.user_ids)
         cursor = await self._db.execute(
             f"""
@@ -367,7 +514,8 @@ class ModerationStore:
         row = await cursor.fetchone()
 
         if row is None:
-            return await self.save_cluster(cluster)
+            new_id = await self.save_cluster(cluster)
+            return new_id, True
 
         existing_id = int(row[0])
         await self._db.execute(
@@ -396,7 +544,7 @@ class ModerationStore:
             ],
         )
         await self._db.commit()
-        return existing_id
+        return existing_id, False
 
     async def get_cluster_member_ids(self, cluster_id: int) -> list[str]:
         """Актуальный состав кластера ПРЯМО СЕЙЧАС, из mod_cluster_members —
@@ -974,3 +1122,486 @@ class ModerationStore:
         if cursor.lastrowid is None:
             raise RuntimeError("INSERT в mod_actions не вернул id")
         return cursor.lastrowid
+
+    # -- Discord-webhook (направление 01 master-plan.html) -------------------
+
+    async def set_discord_webhook(
+        self, *, url: str, enabled: bool, updated_by: str
+    ) -> DiscordWebhookConfig:
+        now = time.time()
+        await self._db.execute(
+            """
+            INSERT INTO mod_discord_webhook (id, url, enabled, updated_by, updated_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                url = excluded.url,
+                enabled = excluded.enabled,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (url, int(enabled), updated_by, now),
+        )
+        await self._db.commit()
+        return DiscordWebhookConfig(url=url, enabled=enabled, updated_by=updated_by, updated_at=now)
+
+    async def get_discord_webhook(self) -> DiscordWebhookConfig | None:
+        cursor = await self._db.execute(
+            "SELECT url, enabled, updated_by, updated_at, last_digest_sent_at, "
+            "last_escalation_sent_at, alert_confidence_threshold FROM mod_discord_webhook WHERE id = 1"
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        (
+            url, enabled, updated_by, updated_at,
+            last_digest_sent_at, last_escalation_sent_at, alert_confidence_threshold,
+        ) = row
+        return DiscordWebhookConfig(
+            url=url,
+            enabled=bool(enabled),
+            updated_by=updated_by,
+            updated_at=updated_at,
+            last_digest_sent_at=last_digest_sent_at,
+            last_escalation_sent_at=last_escalation_sent_at,
+            alert_confidence_threshold=alert_confidence_threshold,
+        )
+
+    async def set_alert_confidence_threshold(self, *, threshold: float) -> None:
+        """Меняет только порог, не трогая url/enabled/cooldown-поля —
+        отдельный вызов от set_discord_webhook(), потому что панель
+        предлагает их как разные действия (адрес webhook и чувствительность
+        алерта настраиваются независимо друг от друга).
+
+        UPDATE, не UPSERT: требует, чтобы webhook уже был настроен (строка
+        существует) — настраивать чувствительность алерта, которого ещё
+        нет, бессмысленно, панель прячет это поле до set_discord_webhook()."""
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError(f"alert_confidence_threshold должен быть в [0, 1], получено {threshold}")
+        cursor = await self._db.execute(
+            "UPDATE mod_discord_webhook SET alert_confidence_threshold = ? WHERE id = 1",
+            (threshold,),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Discord-webhook ещё не настроен — сначала укажите url")
+        await self._db.commit()
+
+    async def mark_digest_sent(self, *, sent_at: float | None = None) -> None:
+        """Вызывается после успешной отправки ежедневного digest — без
+        этого рестарт бота (ChannelPipeline поднимается заново после
+        каждого падения/деплоя) отправил бы второй digest в тот же день,
+        как только фоновый поллер снова стартует с нуля."""
+        await self._db.execute(
+            "UPDATE mod_discord_webhook SET last_digest_sent_at = ? WHERE id = 1",
+            (sent_at if sent_at is not None else time.time(),),
+        )
+        await self._db.commit()
+
+    async def mark_escalation_sent(self, *, sent_at: float | None = None) -> None:
+        """Вызывается после отправки эскалации — cooldown, чтобы 4-й, 5-й,
+        6-й кластер сверх порога не слали новую эскалацию каждый раз (см.
+        докстринг миграции 012)."""
+        await self._db.execute(
+            "UPDATE mod_discord_webhook SET last_escalation_sent_at = ? WHERE id = 1",
+            (sent_at if sent_at is not None else time.time(),),
+        )
+        await self._db.commit()
+
+    async def count_recent_new_clusters(self, *, since: float) -> int:
+        """Сколько НОВЫХ кластеров возникло с since — created_at пишется
+        только save_cluster() (см. upsert_cluster_by_members_ex), рост уже
+        существующего кластера новыми участниками сюда не попадает."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM mod_clusters WHERE created_at >= ?", (since,)
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def get_digest_stats(self, *, since: float) -> DigestStats:
+        """Сводка активности за период [since, сейчас) — см. докстринг
+        DigestStats про то, почему не mod_stats_daily."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM mod_messages WHERE created_at >= ?", (since,)
+        )
+        row = await cursor.fetchone()
+        total_messages = int(row[0]) if row else 0
+
+        # "Подозрительное" здесь — recommended_action, требующее внимания
+        # (TIMEOUT/BAN), не OBSERVE/NOTHING: OBSERVE срабатывает часто на
+        # безобидные сообщения (см. Action в types.py, "порядок = возрастание
+        # строгости") и раздул бы цифру до бессмысленной на активном чате.
+        cursor = await self._db.execute(
+            "SELECT "
+            "SUM(CASE WHEN recommended_action = 'TIMEOUT' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN recommended_action = 'BAN' THEN 1 ELSE 0 END) "
+            "FROM mod_verdicts WHERE created_at >= ? AND recommended_action IN ('TIMEOUT', 'BAN')",
+            (since,),
+        )
+        row = await cursor.fetchone()
+        would_timeout = int(row[0]) if row and row[0] is not None else 0
+        would_ban = int(row[1]) if row and row[1] is not None else 0
+        suspicious_verdicts = would_timeout + would_ban
+
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM mod_clusters WHERE created_at >= ?", (since,)
+        )
+        row = await cursor.fetchone()
+        new_clusters = int(row[0]) if row else 0
+
+        return DigestStats(
+            total_messages=total_messages,
+            suspicious_verdicts=suspicious_verdicts,
+            would_timeout=would_timeout,
+            would_ban=would_ban,
+            new_clusters=new_clusters,
+        )
+
+    async def get_moderator_activity_stats(
+        self, *, since: float, recent_limit: int = 10
+    ) -> ModeratorActivityStats:
+        """Сводка по ручным действиям модераторов за период (пользователь
+        2026-08-13: "можем сводку отправлять в дискорд по работе
+        модераторов?") — источник mod_actions, единственная таблица, куда
+        и executor.py, и ручные действия из панели пишут аудит
+        (record_action_audit). action здесь — строки QueueAction
+        (executor.py): "TIMEOUT"/"BAN"/"DELETE_MESSAGES", не Action из
+        types.py (тот описывает рекомендацию движка, этот — что реально
+        было исполнено)."""
+        cursor = await self._db.execute(
+            "SELECT "
+            "SUM(CASE WHEN action = 'TIMEOUT' THEN succeeded ELSE 0 END), "
+            "SUM(CASE WHEN action = 'BAN' THEN succeeded ELSE 0 END), "
+            "SUM(CASE WHEN action = 'DELETE_MESSAGES' THEN succeeded ELSE 0 END) "
+            "FROM mod_actions WHERE created_at >= ?",
+            (since,),
+        )
+        row = await cursor.fetchone()
+        total_timeouts = int(row[0]) if row and row[0] is not None else 0
+        total_bans = int(row[1]) if row and row[1] is not None else 0
+        total_deletes = int(row[2]) if row and row[2] is not None else 0
+
+        cursor = await self._db.execute(
+            "SELECT actor, "
+            "SUM(CASE WHEN action = 'TIMEOUT' THEN succeeded ELSE 0 END), "
+            "SUM(CASE WHEN action = 'BAN' THEN succeeded ELSE 0 END), "
+            "SUM(CASE WHEN action = 'DELETE_MESSAGES' THEN succeeded ELSE 0 END) "
+            "FROM mod_actions WHERE created_at >= ? "
+            "GROUP BY actor "
+            "ORDER BY (SUM(succeeded)) DESC",
+            (since,),
+        )
+        by_moderator = tuple(
+            ModeratorActionSummary(actor=r[0], timeouts=int(r[1] or 0), bans=int(r[2] or 0), deletes=int(r[3] or 0))
+            for r in await cursor.fetchall()
+        )
+
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            "SELECT created_at, actor, action, scope, succeeded, failed "
+            "FROM mod_actions WHERE created_at >= ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (since, recent_limit),
+        )
+        recent = tuple(
+            RecentModeratorAction(
+                created_at=r["created_at"], actor=r["actor"], action=r["action"],
+                scope=r["scope"], succeeded=r["succeeded"], failed=r["failed"],
+            )
+            for r in await cursor.fetchall()
+        )
+
+        return ModeratorActivityStats(
+            total_timeouts=total_timeouts, total_bans=total_bans, total_deletes=total_deletes,
+            by_moderator=by_moderator, recent=recent,
+        )
+
+    # -- Content Rules (словарный детектор — Rule Engine) --------------------
+
+    async def list_content_rules(self, *, enabled_only: bool = False) -> tuple[ContentRule, ...]:
+        """Правила, отсортированные по строгости категории (RACISM/THREATS
+        раньше ADVERTISING) — check_content() возвращает первое совпадение,
+        порядок определяет, какая категория выигрывает при пересечении
+        формулировок в разных правилах."""
+        self._db.row_factory = aiosqlite.Row
+        where = "WHERE enabled = 1" if enabled_only else ""
+        order = (
+            "CASE category "
+            "WHEN 'racism' THEN 0 WHEN 'threats' THEN 0 WHEN 'advertising' THEN 1 ELSE 2 END"
+        )
+        cursor = await self._db.execute(
+            f"SELECT id, category, phrase, enabled FROM mod_content_rules {where} "
+            f"ORDER BY {order}, id"
+        )
+        rows = await cursor.fetchall()
+        return tuple(
+            ContentRule(
+                id=row["id"],
+                category=ContentCategory(row["category"]),
+                phrase=row["phrase"],
+                enabled=bool(row["enabled"]),
+            )
+            for row in rows
+        )
+
+    async def add_content_rule(
+        self, *, category: ContentCategory, phrase: str, created_by: str
+    ) -> ContentRule:
+        phrase = phrase.strip()
+        if not phrase:
+            raise ValueError("Фраза не может быть пустой")
+        now = time.time()
+        cursor = await self._db.execute(
+            """
+            INSERT INTO mod_content_rules (category, phrase, enabled, created_by, created_at)
+            VALUES (?, ?, 1, ?, ?)
+            """,
+            (category.value, phrase, created_by, now),
+        )
+        await self._db.commit()
+        if cursor.lastrowid is None:
+            raise RuntimeError("INSERT в mod_content_rules не вернул id")
+        return ContentRule(id=cursor.lastrowid, category=category, phrase=phrase, enabled=True)
+
+    async def set_content_rule_enabled(self, rule_id: int, enabled: bool) -> None:
+        await self._db.execute(
+            "UPDATE mod_content_rules SET enabled = ? WHERE id = ?", (int(enabled), rule_id)
+        )
+        await self._db.commit()
+
+    async def delete_content_rule(self, rule_id: int) -> None:
+        await self._db.execute("DELETE FROM mod_content_rules WHERE id = ?", (rule_id,))
+        await self._db.commit()
+
+    # -- Content Settings (режим наблюдателя) --------------------------------
+
+    async def get_content_settings(self) -> ContentSettings:
+        """Singleton-настройка, как mod_attack_mode — по умолчанию enabled=False
+        (см. миграцию 014): пока никто явно не включил через панель, словарный
+        детектор всегда работает в режиме наблюдателя (см. content/policy.py)."""
+        cursor = await self._db.execute(
+            "SELECT enabled, updated_by, updated_at FROM mod_content_settings WHERE id = 1"
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return ContentSettings(enabled=False, updated_by="", updated_at=0.0)
+        enabled, updated_by, updated_at = row
+        return ContentSettings(enabled=bool(enabled), updated_by=updated_by, updated_at=updated_at)
+
+    async def set_content_moderation_enabled(self, enabled: bool, *, updated_by: str) -> None:
+        now = time.time()
+        await self._db.execute(
+            """
+            INSERT INTO mod_content_settings (id, enabled, updated_by, updated_at)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                enabled = excluded.enabled,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (int(enabled), updated_by, now),
+        )
+        await self._db.commit()
+
+    # -- Content Violations (эскалация по категории) -------------------------
+
+    async def get_content_violation_count(self, user_id: str, category: ContentCategory) -> int:
+        cursor = await self._db.execute(
+            "SELECT violation_count FROM mod_content_violations WHERE user_id = ? AND category = ?",
+            (user_id, category.value),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def record_content_violation(self, user_id: str, category: ContentCategory) -> int:
+        """Увеличить счётчик нарушений категории для пользователя и вернуть
+        новое значение. Отдельная таблица от mod_users.prior_timeouts/
+        prior_warnings (пользователь: "отдельный счётчик на категорию") —
+        те поля не инкрементируются нигде в коде (проверено), а эскалация
+        content-нарушений должна считаться по каждой категории независимо:
+        реклама не должна приближать бан за расизм."""
+        now = time.time()
+        await self._db.execute(
+            """
+            INSERT INTO mod_content_violations (user_id, category, violation_count, last_violation_at)
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(user_id, category) DO UPDATE SET
+                violation_count = violation_count + 1,
+                last_violation_at = excluded.last_violation_at
+            """,
+            (user_id, category.value, now),
+        )
+        await self._db.commit()
+        return await self.get_content_violation_count(user_id, category)
+
+    async def record_content_event(
+        self,
+        *,
+        user_id: str,
+        login: str,
+        message_id: int | None,
+        category: ContentCategory,
+        matched_phrase: str,
+        action: str,
+        prior_violations: int,
+        blocked_by: str,
+        enforced: bool,
+    ) -> int:
+        """Аудит срабатывания словарного детектора — отдельно от save_verdict
+        (см. докстринг миграции 014 про то, почему не mod_verdicts).
+        enforced=False в режиме наблюдателя и при любом blocked_by."""
+        cursor = await self._db.execute(
+            """
+            INSERT INTO mod_content_events
+                (created_at, user_id, login, message_id, category, matched_phrase,
+                 action, prior_violations, blocked_by, enforced)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                time.time(), user_id, login, message_id, category.value, matched_phrase,
+                action, prior_violations, blocked_by, int(enforced),
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("INSERT в mod_content_events не вернул id")
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def list_content_events(self, *, limit: int = 50) -> list[dict[str, object]]:
+        """Последние срабатывания словарного детектора, новые сначала —
+        формат для панели (см. /content_events в panel/moderation_api.py).
+
+        LEFT JOIN на mod_messages за twitch_message_id — нужен ручному
+        модерированию из ленты Content (кнопка "Удалить сообщение" зовёт
+        Helix DELETE /moderation/chat, которому нужен настоящий Twitch ID,
+        не внутренний mod_content_events.message_id). LEFT, не INNER: старое
+        событие могло быть записано до миграции 015, когда колонки ещё не
+        было — тогда twitch_message_id придёт NULL, кнопка "Удалить" в
+        панели просто не покажется для этой строки, остальные поля целы.
+
+        manual_action/manual_action_by/manual_action_at (миграция 016) —
+        пометка "по этой строке уже нажали кнопку в панели", переживает
+        обновление страницы (см. mark_content_event_manual_action)."""
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            """
+            SELECT e.id, e.created_at, e.user_id, e.login, e.category, e.matched_phrase,
+                   e.action, e.prior_violations, e.blocked_by, e.enforced,
+                   e.manual_action, e.manual_action_by, e.manual_action_at,
+                   m.twitch_message_id
+            FROM mod_content_events e
+            LEFT JOIN mod_messages m ON m.id = e.message_id
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "user_id": row["user_id"],
+                "login": row["login"],
+                "category": row["category"],
+                "matched_phrase": row["matched_phrase"],
+                "action": row["action"],
+                "prior_violations": row["prior_violations"],
+                "blocked_by": row["blocked_by"],
+                "enforced": bool(row["enforced"]),
+                "twitch_message_id": row["twitch_message_id"],
+                "manual_action": row["manual_action"],
+                "manual_action_by": row["manual_action_by"],
+                "manual_action_at": row["manual_action_at"],
+            }
+            for row in rows
+        ]
+
+    async def mark_content_event_manual_action(
+        self, event_id: int, *, action: str, actor: str
+    ) -> None:
+        """Пометить строку ленты Content как разобранную вручную —
+        вызывается сразу после успешной постановки задания в mod_action_queue
+        из UI (не после реального исполнения executor'ом: тот же принцип,
+        что тост "Задание поставлено в очередь" — панель не ждёт Helix,
+        видимая пометка тоже не должна)."""
+        await self._db.execute(
+            """
+            UPDATE mod_content_events
+            SET manual_action = ?, manual_action_by = ?, manual_action_at = ?
+            WHERE id = ?
+            """,
+            (action, actor, time.time(), event_id),
+        )
+        await self._db.commit()
+
+    # -- Paste Wipe (ручная зачистка волны копипасты) ------------------------
+
+    async def list_recent_messages(self, *, limit: int = 15) -> list[dict[str, object]]:
+        """Последние сообщения чата, новые сначала, без фильтра по
+        risk_score — источник для клика "вставить как образец пасты" в
+        UI (пользователь 2026-08-13: "сделай привязку к чату, чтобы на
+        1 кнопку нажал и паста вставилась, чтобы не копировать и
+        вставлять"). Копирование текста из внешнего чат-виджета руками
+        цепляло мусор (ник, время — см. предыдущее сообщение пользователя
+        с "ЫЫЫЫ75): " в начале образца) — список из самой БД гарантирует
+        точный текст, без ручной правки."""
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            "SELECT login, text, created_at FROM mod_messages ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [{"login": r["login"], "text": r["text"], "created_at": r["created_at"]} for r in rows]
+
+    async def find_paste_wave(
+        self, *, sample_text: str, window_seconds: float, similarity_threshold: float = 0.6
+    ) -> list[dict[str, object]]:
+        """Найти всех пользователей, написавших текст, похожий на
+        sample_text, за последние window_seconds — источник для функции
+        "Зачистить пасту" (пользователь 2026-08-13): модератор вставляет
+        образец копипасты вручную, система находит все совпадения без
+        оглядки на risk_score — паста от доверенных зрителей не проходит
+        через ленту Live (там фильтр risk_score >= 30), значит искать нужно
+        по mod_messages напрямую, не по вердиктам.
+
+        MinHash-похожесть, не точное совпадение — та же техника, что уже
+        ловит изменённые копии дублей в кластеризации (см. normalize.py),
+        здесь просто применена к произвольному образцу текста вместо
+        сравнения сообщений друг с другом. similarity_threshold=0.6 мягче,
+        чем near_duplicate_threshold детектора (0.75 по умолчанию в config.py)
+        — цена пропустить перефразированную копию здесь выше цены найти
+        лишнего: модератор сам видит список найденных перед подтверждением
+        таймаута, ложное совпадение просто останется в списке некликнутым
+        (если UI это допускает) или будет исправлено — здесь без
+        авто-исполнения, ручное подтверждение остаётся за вызывающим кодом.
+
+        Один результат на пользователя — если человек написал пасту
+        трижды, попадает в список один раз (последнее сообщение)."""
+        sample_hash = minhash(sample_text)
+        since = time.time() - window_seconds
+
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            "SELECT user_id, login, text, created_at FROM mod_messages "
+            "WHERE created_at >= ? ORDER BY created_at DESC",
+            (since,),
+        )
+        rows = await cursor.fetchall()
+
+        seen_users: set[str] = set()
+        matches: list[dict[str, object]] = []
+        for row in rows:
+            if row["user_id"] in seen_users:
+                continue
+            score = similarity(sample_hash, minhash(row["text"]))
+            if score >= similarity_threshold:
+                seen_users.add(row["user_id"])
+                matches.append(
+                    {
+                        "user_id": row["user_id"],
+                        "login": row["login"],
+                        "text": row["text"],
+                        "created_at": row["created_at"],
+                        "similarity": round(score, 3),
+                    }
+                )
+        return matches

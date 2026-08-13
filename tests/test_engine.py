@@ -9,13 +9,16 @@ test_clustering.py, но прогнанные через ПОЛНЫЙ движо
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
+import pytest
+
 from cigilbot.config import ChannelProfile, default_config
-from cigilbot.engine import ModerationEngine
+from cigilbot.engine import ESCALATION_CLUSTER_THRESHOLD, ModerationEngine
 from cigilbot.store import ModerationStore, PatternInput
-from cigilbot.types import Action, Mode
+from cigilbot.types import Action, ClusterInfo, Mode
 from tests.conftest import EventFactory
 
 
@@ -839,3 +842,227 @@ class TestExplainability:
         text = verdict.explain()
         assert "ai" not in text.lower()
         assert "нейросеть" not in text.lower()
+
+
+async def _form_bot_wave(engine: ModerationEngine, event_factory: EventFactory, *, wave: int, now: float) -> None:
+    """20 сообщений от новых ботов — тот же паттерн, что
+    TestSpecScenarioViaEngine, но с уникальным user_id на волну, чтобы
+    каждый вызов формировал НЕСВЯЗАННЫЙ (не растущий) кластер — иначе
+    upsert_cluster_by_members_ex посчитал бы это ростом одного и того же
+    кластера, а не новым инцидентом (см. store.py::TestUpsertClusterByMembersEx)."""
+    for i in range(20):
+        ev = event_factory(
+            user_id=f"w{wave}bot{i}", login=f"w{wave}bot{i}",
+            text=f"Забирай подписчики bit.ly/w{wave}x{i % 3}",
+            timestamp=now + i * 0.2, is_first_message=True,
+        )
+        await engine.observe(ev)
+
+
+class TestNewClusterAlert:
+    """Направление 01 master-plan.html: алерт на новый кластер уходит в
+    Discord через фоновую задачу (asyncio.create_task в
+    _notify_new_cluster) — тесты ждут её явным yield цикла событий, не
+    полагаются на то, что await observe() сам её дождался.
+
+    Порог confidence сохраняется в webhook.alert_confidence_threshold через
+    store.set_alert_confidence_threshold(threshold=0.0) в тестах, не
+    проверяющих сам фильтр: реальный confidence кластера, собранного
+    детекторами в этом сценарии, зависит от scoring/confidence.py и
+    меняется при их доработке — тесты про факт отправки алерта не должны
+    быть завязаны на конкретное число, которое к теме теста не относится
+    (см. TestAlertConfidenceFilter ниже про сам порог)."""
+
+    async def test_alert_sent_when_webhook_configured(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[ClusterInfo] = []
+
+        async def fake_send_cluster_alert(webhook, cluster, *, channel, transport=None):  # type: ignore[no-untyped-def]
+            sent.append(cluster)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", fake_send_cluster_alert)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        await store.set_alert_confidence_threshold(threshold=0.0)
+        engine = make_engine(store=store)
+
+        await _form_bot_wave(engine, event_factory, wave=0, now=time.time())
+        await asyncio.sleep(0)  # даём фоновой задаче _notify_new_cluster выполниться
+
+        assert len(sent) == 1
+
+    async def test_no_alert_without_webhook_configured(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[ClusterInfo] = []
+
+        async def fake_send_cluster_alert(webhook, cluster, *, channel, transport=None):  # type: ignore[no-untyped-def]
+            sent.append(cluster)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", fake_send_cluster_alert)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        engine = make_engine(store=store)
+
+        await _form_bot_wave(engine, event_factory, wave=0, now=time.time())
+        await asyncio.sleep(0)
+
+        assert sent == []
+
+
+class TestAlertConfidenceFilter:
+    """Порог confidence настраивается per-channel (webhook.
+    alert_confidence_threshold), не жёсткая константа в engine.py —
+    низкоуверенные кластеры не должны отвлекать модератора алертом, но
+    остаются видны на экране Live независимо от порога."""
+
+    async def test_cluster_above_threshold_sends_alert(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[ClusterInfo] = []
+
+        async def fake_send_cluster_alert(webhook, cluster, *, channel, transport=None):  # type: ignore[no-untyped-def]
+            sent.append(cluster)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", fake_send_cluster_alert)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        await store.set_alert_confidence_threshold(threshold=0.0)  # порог не блокирует
+        engine = make_engine(store=store)
+
+        await _form_bot_wave(engine, event_factory, wave=0, now=time.time())
+        await asyncio.sleep(0)
+
+        assert len(sent) == 1
+
+    async def test_cluster_below_threshold_does_not_send_alert(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[ClusterInfo] = []
+
+        async def fake_send_cluster_alert(webhook, cluster, *, channel, transport=None):  # type: ignore[no-untyped-def]
+            sent.append(cluster)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", fake_send_cluster_alert)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        await store.set_alert_confidence_threshold(threshold=1.0)
+        engine = make_engine(store=store)
+
+        await _form_bot_wave(engine, event_factory, wave=0, now=time.time())
+        await asyncio.sleep(0)
+
+        # Реальный кластер из детекторов почти никогда не набирает ровно
+        # confidence=1.0 — порог=1.0 гарантированно режет любой реальный
+        # результат без знания точного числа заранее.
+        assert sent == []
+
+    async def test_default_threshold_is_point_nine(self, tmp_path: Path) -> None:
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        config = await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        assert config.alert_confidence_threshold == 0.9
+
+
+class TestEscalation:
+    """Направление 01 master-plan.html: ESCALATION_CLUSTER_THRESHOLD+ новых
+    кластеров за окно шлют отдельный алерт эскалации, не только обычный
+    алерт на каждый кластер."""
+
+    async def test_escalation_sent_once_threshold_reached(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        escalations: list[int] = []
+
+        async def fake_send_escalation(webhook, *, channel, cluster_count, window_hours, transport=None):  # type: ignore[no-untyped-def]
+            escalations.append(cluster_count)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", _noop_alert)
+        monkeypatch.setattr("cigilbot.engine.send_escalation", fake_send_escalation)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        engine = make_engine(store=store)
+
+        now = time.time()
+        for wave in range(ESCALATION_CLUSTER_THRESHOLD):
+            await _form_bot_wave(engine, event_factory, wave=wave, now=now + wave * 100)
+            await asyncio.sleep(0)
+
+        assert escalations == [ESCALATION_CLUSTER_THRESHOLD]
+
+    async def test_no_escalation_below_threshold(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        escalations: list[int] = []
+
+        async def fake_send_escalation(webhook, *, channel, cluster_count, window_hours, transport=None):  # type: ignore[no-untyped-def]
+            escalations.append(cluster_count)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", _noop_alert)
+        monkeypatch.setattr("cigilbot.engine.send_escalation", fake_send_escalation)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        engine = make_engine(store=store)
+
+        now = time.time()
+        for wave in range(ESCALATION_CLUSTER_THRESHOLD - 1):
+            await _form_bot_wave(engine, event_factory, wave=wave, now=now + wave * 100)
+            await asyncio.sleep(0)
+
+        assert escalations == []
+
+    async def test_escalation_not_repeated_within_cooldown(
+        self, tmp_path: Path, event_factory: EventFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        escalations: list[int] = []
+
+        async def fake_send_escalation(webhook, *, channel, cluster_count, window_hours, transport=None):  # type: ignore[no-untyped-def]
+            escalations.append(cluster_count)
+
+        monkeypatch.setattr("cigilbot.engine.send_cluster_alert", _noop_alert)
+        monkeypatch.setattr("cigilbot.engine.send_escalation", fake_send_escalation)
+
+        store = ModerationStore(str(tmp_path / "mod.db"))
+        await store.connect()
+        await store.set_discord_webhook(
+            url="https://discord.com/api/webhooks/1/abc", enabled=True, updated_by="test"
+        )
+        engine = make_engine(store=store)
+
+        now = time.time()
+        # Порог достигается волной threshold, затем ЕЩЁ одна волна сверх
+        # порога в течение того же cooldown-окна не должна слать вторую
+        # эскалацию (см. docstring ModerationEngine._maybe_send_escalation).
+        for wave in range(ESCALATION_CLUSTER_THRESHOLD + 1):
+            await _form_bot_wave(engine, event_factory, wave=wave, now=now + wave * 100)
+            await asyncio.sleep(0)
+
+        assert len(escalations) == 1
+
+
+async def _noop_alert(webhook, cluster, *, channel, transport=None):  # type: ignore[no-untyped-def]
+    pass

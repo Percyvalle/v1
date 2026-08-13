@@ -66,6 +66,20 @@ class Sensitivity(str, Enum):
     ATTACK = "ATTACK"  # panic mode, включается вручную и сам выключается по таймеру
 
 
+class ContentCategory(str, Enum):
+    """Категория нарушения, пойманного словарным Rule Engine (cigilbot/content/).
+
+    Отдельно от SignalFamily: словарное совпадение — бинарный факт (нашли
+    фразу или нет), а не вероятностный признак вроде burst/duplicate, и не
+    участвует в risk_score/confidence. У каждой категории своя политика
+    эскалации — cigilbot/content/policy.py.
+    """
+
+    RACISM = "racism"            # оскорбления по признаку — самая строгая
+    THREATS = "threats"          # угрозы насилия
+    ADVERTISING = "advertising"  # реклама и спам-фразы вне детекции ботов
+
+
 class TrustLevel(int, Enum):
     """Насколько пользователь известен каналу."""
 
@@ -103,6 +117,21 @@ class Signal:
     def score(self) -> float:
         """Вклад сигнала в risk score."""
         return self.weight * self.value
+
+
+@dataclass(frozen=True, slots=True)
+class ContentMatch:
+    """Одно совпадение словарного Rule Engine с сообщением.
+
+    matched_phrase — правило, с которым совпало; normalized_text — сообщение
+    после обхода замен (транслит, разделители), тем видом, в котором
+    совпадение действительно нашлось — модератору иначе не объяснить, почему
+    сработало на тексте, который выглядит иначе, чем правило.
+    """
+
+    category: ContentCategory
+    matched_phrase: str
+    normalized_text: str
 
 
 @dataclass(frozen=True, slots=True)

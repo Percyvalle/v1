@@ -292,6 +292,132 @@ CREATE TABLE IF NOT EXISTS mod_giveaway_mode (
 );
 """
 
+# Discord-webhook (направление 01 master-plan.html) — тот же singleton-
+# паттерн, что mod_attack_mode/mod_giveaway_mode: одна БД = один канал,
+# поэтому одна строка, а не таблица с channel_id. url хранится как есть
+# (не токенизированный секрет вроде TWITCH_MOD_*) — Discord сам считает
+# webhook URL секретом и ротирует его при компрометации, здесь достаточно
+# того же уровня защиты, что у остального содержимого БД.
+_MIGRATION_010_DISCORD_WEBHOOK = """
+CREATE TABLE IF NOT EXISTS mod_discord_webhook (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    url TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_by TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+"""
+
+# Ежедневный digest (направление 01 master-plan.html) — та же строка
+# mod_discord_webhook, не отдельная таблица: last_digest_sent_at существует
+# ровно для того, чтобы пережить рестарт бота и не отправить второй digest
+# в тот же день (ChannelPipeline поднимается заново после каждого падения/
+# деплоя — без этого поля таймер стартовал бы с нуля каждый раз). NULL по
+# умолчанию — "ещё ни разу не отправляли", отличимо от 0.0.
+_MIGRATION_011_DIGEST = """
+ALTER TABLE mod_discord_webhook ADD COLUMN last_digest_sent_at REAL;
+"""
+
+# Эскалация при повторных атаках (направление 01 master-plan.html) — та же
+# строка mod_discord_webhook. last_escalation_sent_at нужен как cooldown:
+# без него КАЖДЫЙ новый кластер сверх порога (4-й, 5-й, 6-й...) заново слал
+# бы "эскалация!", хотя план говорит "алертится отдельно", то есть один раз
+# на волну, не на каждый лишний кластер внутри неё.
+_MIGRATION_012_ESCALATION = """
+ALTER TABLE mod_discord_webhook ADD COLUMN last_escalation_sent_at REAL;
+"""
+
+# Порог confidence для алерта на новый кластер (направление 01
+# master-plan.html) — настраиваемый per-channel через панель, не жёстко
+# зашитая константа: разным каналам подходит разная граница "достаточно
+# уверены, чтобы отвлекать модератора" (маленький канал может хотеть более
+# ранние алерты, крупный — только самые очевидные случаи). DEFAULT 0.9 —
+# то же значение, что было константой ALERT_CONFIDENCE_THRESHOLD, чтобы
+# поведение существующих установок не изменилось молча после миграции.
+_MIGRATION_013_ALERT_THRESHOLD = """
+ALTER TABLE mod_discord_webhook ADD COLUMN alert_confidence_threshold REAL NOT NULL DEFAULT 0.9;
+"""
+
+# Content Rules (словарный детектор — Rule Engine) — правила лежат в БД, а
+# не в moderation.yml, потому что список фраз меняется чаще порогов и
+# правится модератором из панели, без деплоя. category — текстовое имя
+# ContentCategory (types.py), не FK: категорий мало и они меняются вместе с
+# кодом политики, отдельная таблица-справочник была бы лишней.
+_MIGRATION_014_CONTENT_RULES = """
+CREATE TABLE IF NOT EXISTS mod_content_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    phrase TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mod_content_rules_category ON mod_content_rules(category);
+
+CREATE TABLE IF NOT EXISTS mod_content_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mod_content_violations (
+    user_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    violation_count INTEGER NOT NULL DEFAULT 0,
+    last_violation_at REAL NOT NULL,
+    PRIMARY KEY (user_id, category)
+);
+
+-- Аудит срабатываний словарного детектора — отдельно от mod_verdicts:
+-- content-решение не имеет risk_score/confidence/signals, поля другой формы
+-- (category, matched_phrase, prior_violations). enforced=0 означает "решение
+-- вычислено, но не выполнено" — режим наблюдателя (content_moderation_enabled
+-- выключен) или blocked_by сработал; отличимо от "выполнено и это был OBSERVE".
+CREATE TABLE IF NOT EXISTS mod_content_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    user_id TEXT NOT NULL,
+    login TEXT NOT NULL,
+    message_id INTEGER REFERENCES mod_messages(id),
+    category TEXT NOT NULL,
+    matched_phrase TEXT NOT NULL,
+    action TEXT NOT NULL,
+    prior_violations INTEGER NOT NULL,
+    blocked_by TEXT NOT NULL DEFAULT '',
+    enforced INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mod_content_events_created_at ON mod_content_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_mod_content_events_user_id ON mod_content_events(user_id, created_at);
+"""
+
+# Ручное модерирование из ленты Content (пользователь 2026-08-13: "можешь
+# сделать в это меню ручное модерирование, удалить, тайм-аут, бан"). Кнопка
+# "Удалить сообщение" зовёт executor.py::delete_chat_messages, а тому нужен
+# НАСТОЯЩИЙ Twitch message_id — mod_messages.id до этой миграции был только
+# внутренним AUTOINCREMENT, никогда не совпадающим с тем, что принимает
+# Helix DELETE /moderation/chat. ChatEvent.message_id (types.py) содержал
+# нужное значение с самого начала, просто ни один store-метод его не
+# сохранял — до сих пор это никому не было нужно, потому что удаление
+# отдельных сообщений через панель не существовало как функция.
+_MIGRATION_015_TWITCH_MESSAGE_ID = """
+ALTER TABLE mod_messages ADD COLUMN twitch_message_id TEXT;
+"""
+
+# Пометка "уже разобрано" на строке ленты Content (пользователь 2026-08-13:
+# "можем как-то помечать сообщения (которое было забанено/удалено/таймаут)
+# в модераторской панели?") — без этого поля обновление страницы стирало
+# след ручного действия: панель заново читала mod_content_events, у которых
+# ничего не менялось от нажатия кнопки "Удалить"/"Таймаут"/"Бан" (эти кнопки
+# только кладут задание в mod_action_queue, саму запись события не трогают).
+# NULL означает "по этой строке ручных действий ещё не было" — отличимо от
+# записи, где действие явно решили не предпринимать.
+_MIGRATION_016_MANUAL_ACTION_MARK = """
+ALTER TABLE mod_content_events ADD COLUMN manual_action TEXT;
+ALTER TABLE mod_content_events ADD COLUMN manual_action_by TEXT;
+ALTER TABLE mod_content_events ADD COLUMN manual_action_at REAL;
+"""
+
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_001_CORE_AUDIT),
     (2, _MIGRATION_002_ACTIONS),
@@ -302,6 +428,13 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (7, _MIGRATION_007_ATTACK_MODE),
     (8, _MIGRATION_008_FEEDBACK),
     (9, _MIGRATION_009_GIVEAWAY_MODE),
+    (10, _MIGRATION_010_DISCORD_WEBHOOK),
+    (11, _MIGRATION_011_DIGEST),
+    (12, _MIGRATION_012_ESCALATION),
+    (13, _MIGRATION_013_ALERT_THRESHOLD),
+    (14, _MIGRATION_014_CONTENT_RULES),
+    (15, _MIGRATION_015_TWITCH_MESSAGE_ID),
+    (16, _MIGRATION_016_MANUAL_ACTION_MARK),
 )
 
 
