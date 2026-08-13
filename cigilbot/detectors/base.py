@@ -19,7 +19,14 @@ from cigilbot.window import SlidingWindow
 
 @dataclass(frozen=True, slots=True)
 class DetectionContext:
-    """Всё, что нужно детектору для оценки одного сообщения."""
+    """Всё, что нужно детектору для оценки одного сообщения.
+
+    known_bad_actor_ids — снимок Cross-Channel Bot Fingerprint (направление
+    03 master-plan.html): user_id, забаненные хотя бы на одном канале
+    оператора. Не поле ChannelContext — тот описывает состояние канала
+    (рейд, розыгрыш), а это про конкретных пользователей, общих для всех
+    каналов сразу. Движок обновляет множество из ModerationHub раз в тик
+    (см. engine.py::sync_known_bad_actors), детектор только читает."""
 
     event: ChatEvent
     fingerprint: MessageFingerprint
@@ -28,6 +35,7 @@ class DetectionContext:
     config: ModerationConfig
     channel_profile: ChannelProfile
     channel_context: ChannelContext
+    known_bad_actor_ids: frozenset[str] = frozenset()
 
 
 class Detector(Protocol):

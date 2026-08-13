@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from cigilbot.fingerprints_store import FingerprintStore
 from cigilbot.store import ModerationStore, QueueItem
 from cigilbot.twitch_api import ActionResult, HelixClient
 
@@ -153,12 +154,45 @@ class ActionExecutor:
         broadcaster_id: str,
         moderator_id: str,
         user_token: str,
+        fingerprint_store: FingerprintStore | None = None,
+        channel_login: str = "",
     ) -> None:
         self._helix = helix
         self._store = store
         self._broadcaster_id = broadcaster_id
         self._moderator_id = moderator_id
         self._user_token = user_token
+        # Cross-Channel Bot Fingerprint (направление 03 master-plan.html):
+        # опционально, потому что не любой вызывающий код (тесты, будущие
+        # сценарии) обязан знать про across-каналов состояние — по умолчанию
+        # запись в fingerprints.db просто не происходит.
+        self._fingerprint_store = fingerprint_store
+        self._channel_login = channel_login
+
+    async def _ban_one(self, user_id: str, *, reason: str) -> ActionResult:
+        """Один BAN-запрос. При успехе, если fingerprint_store подключён
+        (см. ActionExecutor.__init__), записывает аккаунт как известного
+        бота across каналов оператора (направление 03 master-plan.html) —
+        только BAN, не TIMEOUT: временная мера не означает окончательного
+        решения о пользователе."""
+        result = await self._helix.ban_user(
+            broadcaster_id=self._broadcaster_id,
+            moderator_id=self._moderator_id,
+            user_id=user_id,
+            reason=reason,
+            user_token=self._user_token,
+        )
+        if result.success and self._fingerprint_store is not None:
+            state = await self._store.get_user_state(user_id)
+            login = state.login if state is not None else user_id
+            await self._fingerprint_store.record_ban(
+                user_id=user_id,
+                login=login,
+                banned_on_broadcaster_id=self._broadcaster_id,
+                banned_on_login=self._channel_login,
+                reason=reason,
+            )
+        return result
 
     async def _timeout_one(
         self, user_id: str, *, duration_seconds: int | None, reason: str
@@ -201,13 +235,7 @@ class ActionExecutor:
 
         if request.action == QueueAction.BAN:
             target_ids = request.target_user_ids
-            call = lambda uid: self._helix.ban_user(  # noqa: E731
-                broadcaster_id=self._broadcaster_id,
-                moderator_id=self._moderator_id,
-                user_id=uid,
-                reason=request.reason,
-                user_token=self._user_token,
-            )
+            call = lambda uid: self._ban_one(uid, reason=request.reason)  # noqa: E731
         elif request.action == QueueAction.TIMEOUT:
             target_ids = request.target_user_ids
             call = lambda uid: self._timeout_one(  # noqa: E731

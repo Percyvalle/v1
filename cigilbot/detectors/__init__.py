@@ -11,6 +11,7 @@ from __future__ import annotations
 from cigilbot.detectors import (
     account,
     burst,
+    cross_channel,
     duplicate,
     emote,
     keyword_overlap,
@@ -34,6 +35,7 @@ ALL_DETECTORS: tuple[Detector, ...] = (
     account,
     username,
     emote,
+    cross_channel,
 )
 
 

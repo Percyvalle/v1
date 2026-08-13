@@ -184,6 +184,16 @@ class ModerationEngine:
         # (движок без store, тесты) — content_moderation_enabled остаётся
         # False, а не неопределённым.
         self._content_settings = ContentSettings(enabled=False, updated_by="", updated_at=0.0)
+        # Cross-Channel Bot Fingerprint (направление 03 master-plan.html) —
+        # снимок известных забаненных user_id across каналов оператора.
+        # В отличие от остальных кешей выше, движок не читает fingerprints.db
+        # сам (он про ОДИН канал и не владеет across-каналов store) —
+        # ModerationHub читает раз в тик и раздаёт снимок каждому движку
+        # через sync_known_bad_actors().
+        self._known_bad_actor_ids: frozenset[str] = frozenset()
+
+    def sync_known_bad_actors(self, user_ids: frozenset[str]) -> None:
+        self._known_bad_actor_ids = user_ids
 
     async def reload_content_rules(self) -> None:
         """Перечитывает включённые правила словаря из store. Вызывается
@@ -447,6 +457,7 @@ class ModerationEngine:
             config=self._config,
             channel_profile=self._channel_profile,
             channel_context=channel_context,
+            known_bad_actor_ids=self._known_bad_actor_ids,
         )
         signals: list[Signal] = list(run_all(detection_ctx))
 

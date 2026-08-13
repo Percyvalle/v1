@@ -21,6 +21,7 @@ from cigilbot.executor import (
     parse_payload,
     process_pending,
 )
+from cigilbot.fingerprints_store import FingerprintStore
 from cigilbot.store import ModerationStore
 from cigilbot.twitch_api import HelixClient
 from tests.conftest import EventFactory
@@ -29,6 +30,13 @@ from tests.conftest import EventFactory
 @pytest.fixture
 async def store(tmp_path: Path) -> ModerationStore:
     s = ModerationStore(str(tmp_path / "executor_test.db"))
+    await s.connect()
+    return s
+
+
+@pytest.fixture
+async def fingerprint_store(tmp_path: Path) -> FingerprintStore:
+    s = FingerprintStore(str(tmp_path / "fingerprints_test.db"))
     await s.connect()
     return s
 
@@ -174,6 +182,87 @@ class TestActionExecutorBan:
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == "user"
+        await helix.close()
+
+
+class TestActionExecutorBanFingerprint:
+    """Cross-Channel Bot Fingerprint (направление 03 master-plan.html):
+    executor.py пишет в fingerprints.db только после успешного BAN."""
+
+    async def test_successful_ban_records_fingerprint(
+        self, store: ModerationStore, fingerprint_store: FingerprintStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1", login="bot1"))
+        helix = make_helix(ban_ok_handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok",
+            fingerprint_store=fingerprint_store, channel_login="dobriy_yura",
+        )
+        request = parse_payload(
+            {"action": "BAN", "target_user_ids": ["1"], "reason": "known bot pattern"}
+        )
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        actor = await fingerprint_store.get("1")
+        assert actor is not None
+        assert actor.login == "bot1"
+        assert actor.banned_on_broadcaster_id == "B"
+        assert actor.banned_on_login == "dobriy_yura"
+        assert actor.reason == "known bot pattern"
+        await helix.close()
+
+    async def test_failed_ban_does_not_record_fingerprint(
+        self, store: ModerationStore, fingerprint_store: FingerprintStore, event_factory: EventFactory
+    ) -> None:
+        await store.upsert_user(event_factory(user_id="1", login="bot1"))
+        helix = make_helix(lambda request: httpx.Response(400, text="cannot ban broadcaster"))
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok",
+            fingerprint_store=fingerprint_store, channel_login="dobriy_yura",
+        )
+        request = parse_payload({"action": "BAN", "target_user_ids": ["1"], "reason": "x"})
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        assert await fingerprint_store.get("1") is None
+        await helix.close()
+
+    async def test_without_fingerprint_store_ban_still_succeeds(
+        self, store: ModerationStore, event_factory: EventFactory
+    ) -> None:
+        # fingerprint_store не передан (дефолт None, как во всех тестах
+        # TestActionExecutorBan выше) — BAN не должен падать из-за этого.
+        await store.upsert_user(event_factory(user_id="1", login="bot1"))
+        helix = make_helix(ban_ok_handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok"
+        )
+        request = parse_payload({"action": "BAN", "target_user_ids": ["1"], "reason": "x"})
+
+        outcome = await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        assert outcome.succeeded == ("1",)
+        await helix.close()
+
+    async def test_unknown_user_falls_back_to_user_id_as_login(
+        self, store: ModerationStore, fingerprint_store: FingerprintStore
+    ) -> None:
+        # user_id без записи в mod_users (например, из-за гонки — BAN
+        # исполнился раньше, чем upsert_user успел закоммититься) не должен
+        # ронять запись в fingerprints.db.
+        helix = make_helix(ban_ok_handler)
+        executor = ActionExecutor(
+            helix, store, broadcaster_id="B", moderator_id="M", user_token="tok",
+            fingerprint_store=fingerprint_store, channel_login="dobriy_yura",
+        )
+        request = parse_payload({"action": "BAN", "target_user_ids": ["999"], "reason": "x"})
+
+        await executor.execute(request, actor="mod1", actor_role="MODERATOR")
+
+        actor = await fingerprint_store.get("999")
+        assert actor is not None
+        assert actor.login == "999"
         await helix.close()
 
 

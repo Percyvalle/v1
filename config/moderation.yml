@@ -80,6 +80,10 @@ signals:
   # перефразированный self-promo спам, который exact/near_duplicate
   # (посимвольные триграммы) пропускают. См. detectors/keyword_overlap.py.
   keyword_overlap: {family: content, weight: 20}
+  # Забанен хоть где-то — сильное свидетельство, но не автобан в одиночку:
+  # MIN_FAMILIES_FOR_BAN=2 всё равно требует второй независимый сигнал
+  # (cigilbot/policy.py). См. cigilbot/detectors/cross_channel.py.
+  known_bad_actor: {family: history, weight: 30}
 
 detectors:
   burst:
@@ -135,6 +139,9 @@ detectors:
     overlap_threshold: 0.35
     min_significant_words: 1
     min_matches: 3
+
+  cross_channel:
+    enabled: true
 
 # Группировка пользователей, действующих согласованно (раздел "Cluster
 # Detection" в docs/moderation-plan.md). Отдельно от detectors: детекторы

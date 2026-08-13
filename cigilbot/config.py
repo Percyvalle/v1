@@ -166,6 +166,13 @@ class UsernameConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CrossChannelConfig:
+    """Cross-Channel Bot Fingerprint (направление 03 master-plan.html)."""
+
+    enabled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class EmoteConfig:
     enabled: bool = True
     repeat_threshold: int = 8
@@ -210,6 +217,7 @@ class DetectorsConfig:
     account: AccountConfig = field(default_factory=AccountConfig)
     username: UsernameConfig = field(default_factory=UsernameConfig)
     emote: EmoteConfig = field(default_factory=EmoteConfig)
+    cross_channel: CrossChannelConfig = field(default_factory=CrossChannelConfig)
     keyword_overlap: KeywordOverlapConfig = field(default_factory=KeywordOverlapConfig)
 
 
@@ -330,6 +338,7 @@ _DEFAULT_SIGNAL_WEIGHTS: dict[str, tuple[SignalFamily, float]] = {
     "cluster_membership": (SignalFamily.NETWORK, 25),
     "mass_first_messages": (SignalFamily.NETWORK, 20),
     "keyword_overlap": (SignalFamily.CONTENT, 20),
+    "known_bad_actor": (SignalFamily.HISTORY, 30),
 }
 
 
@@ -463,7 +472,7 @@ def _parse_detectors(raw: dict[str, Any]) -> DetectorsConfig:
         raw,
         {
             "burst", "duplicate", "links", "unicode", "language", "account", "username",
-            "emote", "keyword_overlap",
+            "emote", "keyword_overlap", "cross_channel",
         },
         "detectors",
     )
@@ -504,6 +513,7 @@ def _parse_detectors(raw: dict[str, Any]) -> DetectorsConfig:
         raw, "keyword_overlap",
         {"enabled", "window_seconds", "overlap_threshold", "min_significant_words", "min_matches"},
     )
+    cross_channel = _section(raw, "cross_channel", {"enabled"})
 
     return DetectorsConfig(
         burst=BurstConfig(**burst),
@@ -515,6 +525,7 @@ def _parse_detectors(raw: dict[str, Any]) -> DetectorsConfig:
         username=UsernameConfig(**username),
         emote=EmoteConfig(**emote),
         keyword_overlap=KeywordOverlapConfig(**keyword_overlap),
+        cross_channel=CrossChannelConfig(**cross_channel),
     )
 
 

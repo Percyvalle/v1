@@ -52,6 +52,7 @@ from cigilbot.config import load_channel_profile
 from cigilbot.config import load_config as load_moderation_config
 from cigilbot.engine import ModerationEngine
 from cigilbot.executor import ActionExecutor, process_pending
+from cigilbot.fingerprints_store import FingerprintStore
 from cigilbot.mod_token import ModTokenError, ModTokenManager, load_mod_token_manager
 from cigilbot.registry_store import ChannelRecord, RegistryStore
 from cigilbot.store import ModerationStore
@@ -97,10 +98,17 @@ class ChannelPipeline:
     submit() напрямую.
     """
 
-    def __init__(self, *, broadcaster_id: str, channel: str, mod_db_path: Path) -> None:
+    def __init__(
+        self, *, broadcaster_id: str, channel: str, mod_db_path: Path, fingerprints_db_path: Path
+    ) -> None:
         self.broadcaster_id = broadcaster_id
         self.channel = channel
         self.store = ModerationStore(str(mod_db_path))
+        # Cross-Channel Bot Fingerprint (направление 03 master-plan.html):
+        # ActionExecutor пишет сюда после успешного BAN. Отдельное соединение
+        # от ModerationHub._fingerprints, тот читает всю таблицу раз в тик
+        # для detection-кеша, этот только пишет по одной записи за раз.
+        self.fingerprint_store = FingerprintStore(str(fingerprints_db_path))
         self.engine: ModerationEngine | None = None
         self.mod_token_manager: ModTokenManager | None = None
         self.helix_client: HelixClient | None = None
@@ -123,6 +131,7 @@ class ChannelPipeline:
 
     async def start(self) -> None:
         await self.store.connect()
+        await self.fingerprint_store.connect()
 
         self.engine = ModerationEngine(
             load_moderation_config(),
@@ -187,6 +196,7 @@ class ChannelPipeline:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         await self.store.close()
+        await self.fingerprint_store.close()
         log.info("Модерация канала остановлена (broadcaster_id=%s)", self.broadcaster_id)
 
     # -- вход --------------------------------------------------------------
@@ -368,6 +378,8 @@ class ChannelPipeline:
                     broadcaster_id=self.broadcaster_id,
                     moderator_id=state.bot_user_id,
                     user_token=access_token,
+                    fingerprint_store=self.fingerprint_store,
+                    channel_login=self.channel,
                 )
                 processed = await process_pending(executor, self.store)
                 if processed:
@@ -426,16 +438,30 @@ class ModerationHub:
     бота, и это честно отражает устройство.
     """
 
-    def __init__(self, *, registry_db_path: Path, moderation_enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        registry_db_path: Path,
+        fingerprints_db_path: Path | None = None,
+        moderation_enabled: bool = True,
+    ) -> None:
         self._registry_db_path = registry_db_path
+        self._fingerprints_db_path = fingerprints_db_path or paths.FINGERPRINTS_DB
         self._enabled = moderation_enabled
         self._registry: RegistryStore | None = None
+        # Cross-Channel Bot Fingerprint (направление 03 master-plan.html) —
+        # одно соединение на весь хаб, не по одному на канал: читает всю
+        # таблицу раз в тик и раздаёт снимок каждому ChannelPipeline.engine.
+        # Отдельно от ChannelPipeline.fingerprint_store, который только
+        # пишет после BAN (см. докстринг там).
+        self._fingerprints: FingerprintStore | None = None
         self._pipelines: dict[str, ChannelPipeline] = {}
         # login -> broadcaster_id: события из чата приходят с именем канала
         # (twitchio знает login, не числовой id), а пайплайны разложены по
         # broadcaster_id — он стабилен к переименованию канала.
         self._by_login: dict[str, str] = {}
         self._reconcile_task: asyncio.Task[None] | None = None
+        self._fingerprint_sync_task: asyncio.Task[None] | None = None
         self.dropped_unknown_channel = 0
 
     async def start(self) -> None:
@@ -444,8 +470,14 @@ class ModerationHub:
             return
         self._registry = RegistryStore(str(self._registry_db_path))
         await self._registry.connect()
+        self._fingerprints = FingerprintStore(str(self._fingerprints_db_path))
+        await self._fingerprints.connect()
         await self._reconcile()
+        await self._sync_fingerprints()
         self._reconcile_task = asyncio.create_task(self._reconcile_loop(), name="mod-reconcile")
+        self._fingerprint_sync_task = asyncio.create_task(
+            self._sync_fingerprints_loop(), name="mod-fingerprints"
+        )
         log.info("Модерация запущена в процессе бота (каналов: %d)", len(self._pipelines))
 
     async def stop(self) -> None:
@@ -453,6 +485,10 @@ class ModerationHub:
             self._reconcile_task.cancel()
             await asyncio.gather(self._reconcile_task, return_exceptions=True)
             self._reconcile_task = None
+        if self._fingerprint_sync_task is not None:
+            self._fingerprint_sync_task.cancel()
+            await asyncio.gather(self._fingerprint_sync_task, return_exceptions=True)
+            self._fingerprint_sync_task = None
         for pipeline in list(self._pipelines.values()):
             await pipeline.stop()
         self._pipelines.clear()
@@ -460,6 +496,9 @@ class ModerationHub:
         if self._registry is not None:
             await self._registry.close()
             self._registry = None
+        if self._fingerprints is not None:
+            await self._fingerprints.close()
+            self._fingerprints = None
 
     # -- вход --------------------------------------------------------------
 
@@ -481,6 +520,28 @@ class ModerationHub:
     @property
     def active_channels(self) -> list[str]:
         return sorted(self._by_login)
+
+    # -- Cross-Channel Bot Fingerprint (направление 03 master-plan.html) ---
+
+    async def _sync_fingerprints_loop(self) -> None:
+        """Читает fingerprints.db целиком раз в тик и раздаёт снимок каждому
+        активному движку. Один общий тик на весь хаб, не per-channel — та
+        же частота, что RECONCILE_INTERVAL_SECONDS, независимый цикл, чтобы
+        сбой одного не откладывал другой."""
+        while True:
+            await asyncio.sleep(RECONCILE_INTERVAL_SECONDS)
+            try:
+                await self._sync_fingerprints()
+            except Exception:
+                log.exception("Ошибка синхронизации Cross-Channel Bot Fingerprint")
+
+    async def _sync_fingerprints(self) -> None:
+        assert self._fingerprints is not None
+        actors = await self._fingerprints.list_all()
+        known_ids = frozenset(a.user_id for a in actors)
+        for pipeline in self._pipelines.values():
+            if pipeline.engine is not None:
+                pipeline.engine.sync_known_bad_actors(known_ids)
 
     # -- сверка с Registry -------------------------------------------------
 
@@ -526,6 +587,7 @@ class ModerationHub:
             broadcaster_id=record.broadcaster_id,
             channel=login,
             mod_db_path=paths.mod_db(record.broadcaster_id),
+            fingerprints_db_path=paths.FINGERPRINTS_DB,
         )
         try:
             await pipeline.start()

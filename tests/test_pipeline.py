@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from cigilbot import pipeline as pipeline_mod
+from cigilbot.fingerprints_store import FingerprintStore
 from cigilbot.pipeline import ChannelPipeline, ModerationHub
 from cigilbot.registry_store import RegistryStore
 from cigilbot.twitch_api import HelixClient
@@ -34,6 +35,7 @@ class StubEngine:
         self.seen: list[str] = []
         self.raids = 0
         self.fail_on: set[str] = set()
+        self.known_bad_actor_syncs: list[frozenset[str]] = []
 
     async def observe(self, event):  # type: ignore[no-untyped-def]
         if event.text in self.fail_on:
@@ -43,6 +45,9 @@ class StubEngine:
 
     def mark_raid_started(self) -> None:
         self.raids += 1
+
+    def sync_known_bad_actors(self, user_ids: frozenset[str]) -> None:
+        self.known_bad_actor_syncs.append(user_ids)
 
 
 def _verdict(*, provisional: bool = False):  # type: ignore[no-untyped-def]
@@ -66,7 +71,10 @@ def _chat(text: str, *, channel: str = "streamer", user_id: str = "1") -> dict[s
 def _make_pipeline(tmp_path: Path, *, channel: str = "streamer") -> ChannelPipeline:
     """Пайплайн без start(): движок подменён, БД и Helix не нужны."""
     p = ChannelPipeline(
-        broadcaster_id="1", channel=channel, mod_db_path=tmp_path / "mod.1.db"
+        broadcaster_id="1",
+        channel=channel,
+        mod_db_path=tmp_path / "mod.1.db",
+        fingerprints_db_path=tmp_path / "fingerprints.db",
     )
     p.engine = StubEngine()  # type: ignore[assignment]
     return p
@@ -164,13 +172,22 @@ class _FakePipeline:
     instances: list[_FakePipeline] = []
     fail_start_for: set[str] = set()
 
-    def __init__(self, *, broadcaster_id: str, channel: str, mod_db_path: Path) -> None:
+    def __init__(
+        self, *, broadcaster_id: str, channel: str, mod_db_path: Path, fingerprints_db_path: Path
+    ) -> None:
         self.broadcaster_id = broadcaster_id
         self.channel = channel
         self.mod_db_path = mod_db_path
+        self.fingerprints_db_path = fingerprints_db_path
         self.started = False
         self.stopped = False
         self.submitted: list[dict[str, object]] = []
+        # Настоящий ChannelPipeline создаёт engine в start() — фейк не
+        # поднимает реальный движок, ModerationHub._sync_fingerprints()
+        # должен пропускать пайплайны без него, не падать. Аннотация
+        # StubEngine | None (не None) — тесты присваивают StubEngine после
+        # создания (см. TestHubFingerprintSync), и mypy должен это принимать.
+        self.engine: StubEngine | None = None
         _FakePipeline.instances.append(self)
 
     async def start(self) -> None:
@@ -422,7 +439,10 @@ class TestPollActionQueueUsesOwnBroadcasterId:
         from cigilbot.mod_token import ModTokenManager
 
         pipeline = ChannelPipeline(
-            broadcaster_id="second_channel", channel="beta", mod_db_path=tmp_path / "mod.2.db"
+            broadcaster_id="second_channel",
+            channel="beta",
+            mod_db_path=tmp_path / "mod.2.db",
+            fingerprints_db_path=tmp_path / "fingerprints.db",
         )
 
         fake_manager = object.__new__(ModTokenManager)
@@ -460,3 +480,48 @@ class TestPollActionQueueUsesOwnBroadcasterId:
 
         assert captured["broadcaster_id"] == "second_channel"
         assert captured["broadcaster_id"] != "first_channel"
+
+
+class TestHubFingerprintSync:
+    """Cross-Channel Bot Fingerprint (направление 03 master-plan.html):
+    ModerationHub читает fingerprints.db и раздаёт снимок каждому движку."""
+
+    async def test_known_actors_reach_every_channel_engine(
+        self, tmp_path: Path, fake_pipeline: type[_FakePipeline]
+    ) -> None:
+        db = await _registry_with(
+            tmp_path, [("1", "alpha", "running"), ("2", "beta", "running")]
+        )
+        fingerprints_path = tmp_path / "fingerprints.db"
+        fp_store = FingerprintStore(str(fingerprints_path))
+        await fp_store.connect()
+        await fp_store.record_ban(
+            user_id="bot1", login="bot1", banned_on_broadcaster_id="1", banned_on_login="alpha"
+        )
+        await fp_store.close()
+
+        hub = ModerationHub(registry_db_path=db, fingerprints_db_path=fingerprints_path)
+        await hub.start()
+        try:
+            for p in fake_pipeline.instances:
+                p.engine = StubEngine()
+            await hub._sync_fingerprints()  # noqa: SLF001
+
+            for p in fake_pipeline.instances:
+                assert p.engine is not None
+                assert p.engine.known_bad_actor_syncs[-1] == frozenset({"bot1"})
+        finally:
+            await hub.stop()
+
+    async def test_pipeline_without_engine_is_skipped(
+        self, tmp_path: Path, fake_pipeline: type[_FakePipeline]
+    ) -> None:
+        # Пайплайн ещё не успел поднять движок (start() в процессе) — синк
+        # не должен падать, engine остаётся None у фейка по умолчанию.
+        db = await _registry_with(tmp_path, [("1", "alpha", "running")])
+        hub = ModerationHub(registry_db_path=db, fingerprints_db_path=tmp_path / "fingerprints.db")
+        await hub.start()
+        try:
+            await hub._sync_fingerprints()  # noqa: SLF001
+        finally:
+            await hub.stop()

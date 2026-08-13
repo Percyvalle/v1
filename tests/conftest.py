@@ -95,6 +95,7 @@ def make_context(
     config: ModerationConfig | None = None,
     channel_profile: ChannelProfile | None = None,
     channel_context: ChannelContext | None = None,
+    known_bad_actor_ids: frozenset[str] = frozenset(),
 ) -> DetectionContext:
     """Собрать DetectionContext с разумными дефолтами для теста одного детектора.
 
@@ -114,4 +115,5 @@ def make_context(
             channel_profile if channel_profile is not None else ChannelProfile(channel="test")
         ),
         channel_context=channel_context if channel_context is not None else ChannelContext(),
+        known_bad_actor_ids=known_bad_actor_ids,
     )

@@ -59,6 +59,12 @@ VAR = REPO_ROOT / "var"
 # процесса, а не защитой от недоступности соседа.
 REGISTRY_DB = VAR / "registry.db"
 
+# Cross-Channel Bot Fingerprint (направление 03 master-plan.html) — известные
+# боты, забаненные хотя бы на одном канале оператора. Общий на все каналы,
+# как registry.db, но другой владелец данных: не "какие каналы существуют",
+# а "кто на них забанен" (см. cigilbot/fingerprints_migrations.py).
+FINGERPRINTS_DB = VAR / "fingerprints.db"
+
 BOT_VAR = VAR / "bot"
 BOT_LOGS = BOT_VAR / "logs"
 # pid- и lock-файлы: самое эфемерное состояние, единственное, что можно

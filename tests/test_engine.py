@@ -535,6 +535,42 @@ class TestAttackMode:
         assert engine.attack_mode_active is False
 
 
+class TestKnownBadActors:
+    """Cross-Channel Bot Fingerprint (направление 03 master-plan.html):
+    ModerationHub раздаёт снимок известных user_id через
+    sync_known_bad_actors(), движок сам не ходит в fingerprints.db."""
+
+    async def test_empty_by_default(self, event_factory: EventFactory) -> None:
+        engine = make_engine()
+        verdict = await engine.observe(event_factory(user_id="1", text="привет всем"))
+        assert "known_bad_actor" not in [s.name for s in verdict.signals]
+
+    async def test_known_user_gets_signal(self, event_factory: EventFactory) -> None:
+        engine = make_engine()
+        engine.sync_known_bad_actors(frozenset({"1"}))
+
+        verdict = await engine.observe(event_factory(user_id="1", text="привет всем"))
+
+        assert "known_bad_actor" in [s.name for s in verdict.signals]
+
+    async def test_unrelated_user_unaffected(self, event_factory: EventFactory) -> None:
+        engine = make_engine()
+        engine.sync_known_bad_actors(frozenset({"other_user"}))
+
+        verdict = await engine.observe(event_factory(user_id="1", text="привет всем"))
+
+        assert "known_bad_actor" not in [s.name for s in verdict.signals]
+
+    async def test_resync_replaces_previous_set(self, event_factory: EventFactory) -> None:
+        engine = make_engine()
+        engine.sync_known_bad_actors(frozenset({"1"}))
+        engine.sync_known_bad_actors(frozenset({"2"}))
+
+        verdict = await engine.observe(event_factory(user_id="1", text="привет всем"))
+
+        assert "known_bad_actor" not in [s.name for s in verdict.signals]
+
+
 class TestAutoChannelContext:
     """FALSE-BAN-001 аудита: раньше engine.observe() без явного
     channel_context всегда получал ChannelContext() (все флаги False) —
